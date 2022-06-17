@@ -1,35 +1,46 @@
 # Implementations of AbstractFileSystem and AbstractBufferedFile
 
-from fsspec.spec import AbstractFileSystem, AbstractBufferedFile
-from XRootD import client
-from XRootD.client.flags import OpenFlags, StatInfoFlags, DirListFlags
-import warnings
+from __future__ import annotations
+
 import io
+import warnings
+from typing import Any, Union
+
+from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
+from XRootD import client
+from XRootD.client.flags import DirListFlags, OpenFlags, StatInfoFlags
 
 
 class XRootDFileSystem(AbstractFileSystem):
 
     # unpack storage_options as necessary
-    def __init__(self, *args, **storage_options):
+    def __init__(self, *args: list[Any], **storage_options: dict[Any, Any]) -> None:
         self._path = storage_options["path"]
-        self._myclient = client.FileSystem(storage_options["protocol"] + "://"
-                                           + storage_options["hostid"])
+        self._myclient = client.FileSystem(
+            storage_options["protocol"] + "://" + storage_options["hostid"]
+        )
         self.storage_options = storage_options
         self._intrans = False
 
     @staticmethod
-    def _get_kwargs_from_urls(u):
+    def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
 
         url = client.URL(u)
 
-        return {"hostid": url.hostid, "protocol": url.protocol,
-                "username": url.username, "password": url.password,
-                "hostname": url.hostname, "port": url.port,
-                "path": url.path, "path_with_params": url.path_with_params}
+        return {
+            "hostid": url.hostid,
+            "protocol": url.protocol,
+            "username": url.username,
+            "password": url.password,
+            "hostname": url.hostname,
+            "port": url.port,
+            "path": url.path,
+            "path_with_params": url.path_with_params,
+        }
 
     # Implement a new _strip_protocol?
 
-    def ls(self, path, detail=True, **kwargs):
+    def ls(self, path: str, detail: bool = True, **kwargs: dict[Any, Any]) -> list[Any]:
 
         stats, deets = self._myclient.dirlist(path, DirListFlags.STAT)
 
@@ -45,8 +56,13 @@ class XRootDFileSystem(AbstractFileSystem):
                 else:
                     t = "file"
 
-                listing.append({"name": path+"/"+item.name,
-                                "size": item.statinfo.size, "type": t})
+                listing.append(
+                    {
+                        "name": path + "/" + item.name,
+                        "size": item.statinfo.size,
+                        "type": t,
+                    }
+                )
         else:
             for item in deets:
                 listing.append(item.name)
@@ -55,13 +71,13 @@ class XRootDFileSystem(AbstractFileSystem):
 
     def _open(
         self,
-        path,
-        mode="rb",
-        block_size=None,
-        autocommit=True,
-        cache_options=None,
-        **kwargs,
-    ):
+        path: str,
+        mode: str = "rb",
+        block_size: int | None = None,
+        autocommit: bool = True,
+        cache_options: dict[Any, Any] | None = None,
+        **kwargs: dict[Any, Any],
+    ) -> XRootDFile:
 
         return XRootDFile(
             self,
@@ -75,13 +91,13 @@ class XRootDFileSystem(AbstractFileSystem):
 
     def open(
         self,
-        path,
-        mode="rb",
-        block_size=None,
-        cache_options=None,
-        compression=None,
-        **kwargs,
-    ):
+        path: str,
+        mode: str = "rb",
+        block_size: int | None = None,
+        cache_options: dict[Any, Any] | None = None,
+        compression: str | None = None,
+        **kwargs: dict[Any, Any],
+    ) -> Any:  # Placeholder type, better option?
 
         import io
 
@@ -129,19 +145,18 @@ class XRootDFileSystem(AbstractFileSystem):
 
 
 class XRootDFile(AbstractBufferedFile):
-
     def __init__(
         self,
-        fs,
-        path,
-        mode="rb",
-        block_size="default",
-        autocommit=True,
-        cache_type="readahead",
-        cache_options=None,
-        size=None,
-        **kwargs,
-    ):
+        fs: XRootDFileSystem,
+        path: str,
+        mode: str = "rb",
+        block_size: int | str = "default",
+        autocommit: bool = True,
+        cache_type: str = "readahead",
+        cache_options: dict[Any, Any] | None = None,
+        size: int | None = None,
+        **kwargs: dict[Any, Any],
+    ) -> None:
         from fsspec.core import caches
 
         # by this point, mode will have a "b" in it
@@ -159,20 +174,24 @@ class XRootDFile(AbstractBufferedFile):
             raise NotImplementedError
 
         self._myFile = client.File()
-        stat, _n = self._myFile.open(fs.storage_options["protocol"]
-                                     + "://" + fs.storage_options["hostid"]
-                                     + "/" + path, self.mode)
+        stat, _n = self._myFile.open(
+            fs.storage_options["protocol"]
+            + "://"
+            + fs.storage_options["hostid"]
+            + "/"
+            + path,
+            self.mode,
+        )
 
         if not stat.ok:
             print(stat.message)
-            raise IOError
+            raise OSError
 
         self.path = path
         self.fs = fs
         self.mode = mode
         self.blocksize = (
-            self.DEFAULT_BLOCK_SIZE if block_size in ["default", None]
-            else block_size
+            self.DEFAULT_BLOCK_SIZE if block_size in ["default", None] else block_size
         )
         self.loc = 0
         self.autocommit = autocommit
@@ -210,11 +229,11 @@ class XRootDFile(AbstractBufferedFile):
             self.forced = False
             self.location = None
 
-    def _fetch_range(self, start, end):
-        status, data = self._myFile.read(start, end-start)
+    def _fetch_range(self, start: int, end: int) -> Any:
+        status, data = self._myFile.read(start, end - start)
         return data
 
-    def close(self):
+    def close(self) -> None:
         print("Closed!")
         if getattr(self, "_unclosable", False):
             return
