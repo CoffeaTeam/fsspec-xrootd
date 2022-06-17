@@ -1,25 +1,31 @@
-# File that contains the implementations of AbstractFileSystem and AbstractBufferedFile
+# Implementations of AbstractFileSystem and AbstractBufferedFile
 
 from fsspec.spec import AbstractFileSystem, AbstractBufferedFile
 from XRootD import client
 from XRootD.client.flags import OpenFlags, StatInfoFlags, DirListFlags
+import warnings
+import io
+
 
 class XRootDFileSystem(AbstractFileSystem):
 
-    def __init__(self, *args, **storage_options):# unpack storage_options as necessary
+    # unpack storage_options as necessary
+    def __init__(self, *args, **storage_options):
         self._path = storage_options["path"]
-        self._myclient = client.FileSystem(storage_options["protocol"] + "://" + storage_options["hostid"])
+        self._myclient = client.FileSystem(storage_options["protocol"] + "://"
+                                           + storage_options["hostid"])
         self.storage_options = storage_options
         self._intrans = False
 
     @staticmethod
     def _get_kwargs_from_urls(u):
-        
+
         url = client.URL(u)
 
-        return {"hostid":url.hostid, "protocol":url.protocol,"username":url.username,
-                "password":url.password, "hostname":url.hostname, "port":url.port, 
-                "path":url.path, "path_with_params":url.path_with_params}
+        return {"hostid": url.hostid, "protocol": url.protocol,
+                "username": url.username, "password": url.password,
+                "hostname": url.hostname, "port": url.port,
+                "path": url.path, "path_with_params": url.path_with_params}
 
     # Implement a new _strip_protocol?
 
@@ -39,13 +45,13 @@ class XRootDFileSystem(AbstractFileSystem):
                 else:
                     t = "file"
 
-                listing.append({"name": path+"/"+item.name, "size": item.statinfo.size, "type": t})
+                listing.append({"name": path+"/"+item.name,
+                                "size": item.statinfo.size, "type": t})
         else:
             for item in deets:
                 listing.append(item.name)
 
         return listing
-        
 
     def _open(
         self,
@@ -76,7 +82,7 @@ class XRootDFileSystem(AbstractFileSystem):
         compression=None,
         **kwargs,
     ):
-      
+
         import io
 
         path = self._strip_protocol(path)
@@ -121,6 +127,7 @@ class XRootDFileSystem(AbstractFileSystem):
                 self.transaction.files.append(f)
             return f
 
+
 class XRootDFile(AbstractBufferedFile):
 
     def __init__(
@@ -136,7 +143,7 @@ class XRootDFile(AbstractBufferedFile):
         **kwargs,
     ):
         from fsspec.core import caches
-        
+
         # by this point, mode will have a "b" in it
         if "x" in mode:
             self.mode = OpenFlags.NEW
@@ -149,10 +156,12 @@ class XRootDFile(AbstractBufferedFile):
         elif "r" in mode:
             self.mode = OpenFlags.READ
         else:
-            raise NotImplementedError   
-        
+            raise NotImplementedError
+
         self._myFile = client.File()
-        stat, _n = self._myFile.open(fs.storage_options["protocol"] + "://" + fs.storage_options["hostid"] + "/" + path, self.mode)
+        stat, _n = self._myFile.open(fs.storage_options["protocol"]
+                                     + "://" + fs.storage_options["hostid"]
+                                     + "/" + path, self.mode)
 
         if not stat.ok:
             print(stat.message)
@@ -162,7 +171,8 @@ class XRootDFile(AbstractBufferedFile):
         self.fs = fs
         self.mode = mode
         self.blocksize = (
-            self.DEFAULT_BLOCK_SIZE if block_size in ["default", None] else block_size
+            self.DEFAULT_BLOCK_SIZE if block_size in ["default", None]
+            else block_size
         )
         self.loc = 0
         self.autocommit = autocommit
@@ -175,7 +185,8 @@ class XRootDFile(AbstractBufferedFile):
 
         if "trim" in kwargs:
             warnings.warn(
-                "Passing 'trim' to control the cache behavior has been deprecated. "
+                "Passing 'trim' to control the cache behavior has been"
+                " deprecated. "
                 "Specify it within the 'cache_options' argument instead.",
                 FutureWarning,
             )
@@ -198,12 +209,11 @@ class XRootDFile(AbstractBufferedFile):
             self.offset = None
             self.forced = False
             self.location = None
-        
 
     def _fetch_range(self, start, end):
         status, data = self._myFile.read(start, end-start)
         return data
-    
+
     def close(self):
         print("Closed!")
         if getattr(self, "_unclosable", False):
