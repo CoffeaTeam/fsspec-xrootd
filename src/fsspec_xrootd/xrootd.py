@@ -79,9 +79,18 @@ class XRootDFileSystem(AbstractFileSystem):
             with self.open(path, "a", **kwargs):
                 pass
 
-    def modified(self, path: str) -> str:
+    def modified(self, path: str) -> Any:
         stat, statInfo = self._myclient.stat(path)
         return statInfo.modtimestr
+
+    def sign(self, path: str, expiration: int = 100, **kwargs: dict[Any, Any]) -> Any:
+        return (
+            self.storage_options["protocol"]
+            + "://"
+            + self.storage_options["hostid"]
+            + "//"
+            + self.storage_options["path_with_params"]
+        )
 
     def ls(self, path: str, detail: bool = True, **kwargs: dict[Any, Any]) -> list[Any]:
 
