@@ -6,15 +6,20 @@ import io
 import warnings
 from typing import Any
 
-from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
-from XRootD import client
-from XRootD.client.flags import DirListFlags, MkDirFlags, OpenFlags, StatInfoFlags
+from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
+from XRootD import client  # type: ignore[import]
+from XRootD.client.flags import (  # type: ignore[import]
+    DirListFlags,
+    MkDirFlags,
+    OpenFlags,
+    StatInfoFlags,
+)
 
 
-class XRootDFileSystem(AbstractFileSystem):
+class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     # unpack storage_options as necessary
-    def __init__(self, *args: list[Any], **storage_options: dict[Any, Any]) -> None:
+    def __init__(self, *args: list[Any], **storage_options: str) -> None:
         self._path = storage_options["path"]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
@@ -39,39 +44,33 @@ class XRootDFileSystem(AbstractFileSystem):
         }
 
     # Implement a new _strip_protocol?
-    def mkdir(
-        self, path: str, create_parents: bool = True, **kwargs: dict[Any, Any]
-    ) -> None:
+    def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
         if create_parents:
-            stat, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+            status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
         else:
-            stat, n = self._myclient.mkdir(path)
-        if not stat.ok:
-            print(stat.message)
-            raise OSError
+            status, n = self._myclient.mkdir(path)
+        if not status.ok:
+            raise OSError(f"Directory not made properly: {status.message}")
 
     def makedirs(self, path: str, exist_ok: bool = False) -> None:
-        stat, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
-        if not stat.ok:
-            print(stat.message)
-            raise OSError
-        stat, statInfo = self._myclient.stat(path)
+        status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+        if not status.ok:
+            raise OSError(f"Directories not made properly: {status.message}")
+        status, statInfo = self._myclient.stat(path)
         if not (statInfo.flags and StatInfoFlags.IS_DIR):
-            raise OSError
+            raise OSError("Path leads to file")
 
     def rmdir(self, path: str) -> None:
-        stat, n = self._myclient.rmdir(path)
-        if not stat.ok:
-            print(stat.message)
-            raise OSError
+        status, n = self._myclient.rmdir(path)
+        if not status.ok:
+            raise OSError(f"Directory not removed properly: {status.message}")
 
     def _rm(self, path: str) -> None:
-        stat, n = self._myclient.rm(path)
-        if not stat.ok:
-            print(stat.message)
-            raise OSError
+        status, n = self._myclient.rm(path)
+        if not status.ok:
+            raise OSError(f"File not removed properly: {status.message}")
 
-    def touch(self, path: str, truncate: bool = True, **kwargs: dict[Any, Any]) -> None:
+    def touch(self, path: str, truncate: bool = True, **kwargs: Any) -> None:
         if truncate or not self.exists(path):
             with self.open(path, "wb", **kwargs):
                 pass
@@ -80,10 +79,10 @@ class XRootDFileSystem(AbstractFileSystem):
                 pass
 
     def modified(self, path: str) -> Any:
-        stat, statInfo = self._myclient.stat(path)
+        status, statInfo = self._myclient.stat(path)
         return statInfo.modtimestr
 
-    def sign(self, path: str, expiration: int = 100, **kwargs: dict[Any, Any]) -> Any:
+    def sign(self, path: str, expiration: int = 100, **kwargs: Any) -> Any:
         return (
             self.storage_options["protocol"]
             + "://"
@@ -92,9 +91,9 @@ class XRootDFileSystem(AbstractFileSystem):
             + self.storage_options["path_with_params"]
         )
 
-    def ls(self, path: str, detail: bool = True, **kwargs: dict[Any, Any]) -> list[Any]:
+    def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
 
-        stats, deets = self._myclient.dirlist(path, DirListFlags.STAT)
+        status, deets = self._myclient.dirlist(path, DirListFlags.STAT)
 
         listing = []
 
@@ -125,10 +124,10 @@ class XRootDFileSystem(AbstractFileSystem):
         self,
         path: str,
         mode: str = "rb",
-        block_size: int | None = None,
+        block_size: int | str | None = None,
         autocommit: bool = True,
         cache_options: dict[Any, Any] | None = None,
-        **kwargs: dict[Any, Any],
+        **kwargs: Any,
     ) -> XRootDFile:
 
         return XRootDFile(
@@ -145,13 +144,11 @@ class XRootDFileSystem(AbstractFileSystem):
         self,
         path: str,
         mode: str = "rb",
-        block_size: int | None = None,
+        block_size: int | int | None = None,
         cache_options: dict[Any, Any] | None = None,
         compression: str | None = None,
-        **kwargs: dict[Any, Any],
-    ) -> Any:  # Placeholder type, better option?
-
-        import io
+        **kwargs: Any,
+    ) -> Any:  # returns text wrapper or XRootDFile
 
         path = self._strip_protocol(path)
         if "b" not in mode:
@@ -184,8 +181,8 @@ class XRootDFileSystem(AbstractFileSystem):
                 **kwargs,
             )
             if compression is not None:
-                from fsspec.compression import compr
-                from fsspec.core import get_compression
+                from fsspec.compression import compr  # type: ignore[import]
+                from fsspec.core import get_compression  # type: ignore[import]
 
                 compression = get_compression(path, compression)
                 compress = compr[compression]
@@ -196,13 +193,13 @@ class XRootDFileSystem(AbstractFileSystem):
             return f
 
 
-class XRootDFile(AbstractBufferedFile):
+class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
     def __init__(
         self,
         fs: XRootDFileSystem,
         path: str,
         mode: str = "rb",
-        block_size: int | str = "default",
+        block_size: int | str | None = "default",
         autocommit: bool = True,
         cache_type: str = "readahead",
         cache_options: dict[Any, Any] | None = None,
@@ -226,7 +223,7 @@ class XRootDFile(AbstractBufferedFile):
             raise NotImplementedError
 
         self._myFile = client.File()
-        stat, _n = self._myFile.open(
+        status, _n = self._myFile.open(
             fs.storage_options["protocol"]
             + "://"
             + fs.storage_options["hostid"]
@@ -235,9 +232,8 @@ class XRootDFile(AbstractBufferedFile):
             self.mode,
         )
 
-        if not stat.ok:
-            print(stat.message)
-            raise OSError
+        if not status.ok:
+            raise OSError(f"File did not open properly: {status.message}")
 
         self.path = path
         self.fs = fs
@@ -283,10 +279,11 @@ class XRootDFile(AbstractBufferedFile):
 
     def _fetch_range(self, start: int, end: int) -> Any:
         status, data = self._myFile.read(start, end - start)
+        if not status.ok:
+            raise OSError(f"File did not read properly: {status.message}")
         return data
 
     def close(self) -> None:
-        print("Closed!")
         if getattr(self, "_unclosable", False):
             return
         if self.closed:
@@ -300,5 +297,7 @@ class XRootDFile(AbstractBufferedFile):
             if self.fs is not None:
                 self.fs.invalidate_cache(self.path)
                 self.fs.invalidate_cache(self.fs._parent(self.path))
-        self._myFile.close()
+        status = self._myFile.close()
+        if not status.ok:
+            raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
