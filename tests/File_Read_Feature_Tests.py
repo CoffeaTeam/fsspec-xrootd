@@ -1,25 +1,24 @@
-from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
-from XRootD import client
-from XRootD.client.flags import DirListFlags, OpenFlags, StatInfoFlags
+from __future__ import annotations
 
 import xrootd as xrtd
+from XRootD import client
 
-url = 'PLACE HOLDER' # use url of git hub xrootd server
+url = "PLACE HOLDER"  # use url of git hub xrootd server
 
 kw = xrtd.XRootDFileSystem._get_kwargs_from_urls(url)
 
 url = client.URL(url)
 
-refDict = { # dict to check kw against
-            "hostid": url.hostid,
-            "protocol": url.protocol,
-            "username": url.username,
-            "password": url.password,
-            "hostname": url.hostname,
-            "port": url.port,
-            "path": url.path,
-            "path_with_params": url.path_with_params,
-        }
+refDict = {  # dict to check kw against
+    "hostid": url.hostid,
+    "protocol": url.protocol,
+    "username": url.username,
+    "password": url.password,
+    "hostname": url.hostname,
+    "port": url.port,
+    "path": url.path,
+    "path_with_params": url.path_with_params,
+}
 
 if not (refDict == kw):
     raise Exception("kwargs from url error")
