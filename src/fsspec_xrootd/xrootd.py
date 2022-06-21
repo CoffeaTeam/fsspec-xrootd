@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import io
 import warnings
-from typing import Any, Union
+from typing import Any
 
-from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
-from XRootD import client
-from XRootD.client.flags import DirListFlags, OpenFlags, StatInfoFlags
+from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
+from XRootD import client  # type: ignore[import]
+from XRootD.client.flags import (  # type: ignore[import]
+    DirListFlags,
+    OpenFlags,
+    StatInfoFlags,
+)
 
 
-class XRootDFileSystem(AbstractFileSystem):
+class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     # unpack storage_options as necessary
-    def __init__(self, *args: list[Any], **storage_options: dict[Any, Any]) -> None:
+    def __init__(self, *args: list[Any], **storage_options: str) -> None:
         self._path = storage_options["path"]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
@@ -40,7 +44,7 @@ class XRootDFileSystem(AbstractFileSystem):
 
     # Implement a new _strip_protocol?
 
-    def ls(self, path: str, detail: bool = True, **kwargs: dict[Any, Any]) -> list[Any]:
+    def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
 
         stats, deets = self._myclient.dirlist(path, DirListFlags.STAT)
 
@@ -73,10 +77,10 @@ class XRootDFileSystem(AbstractFileSystem):
         self,
         path: str,
         mode: str = "rb",
-        block_size: int | None = None,
+        block_size: int | str | None = None,
         autocommit: bool = True,
         cache_options: dict[Any, Any] | None = None,
-        **kwargs: dict[Any, Any],
+        **kwargs: Any,
     ) -> XRootDFile:
 
         return XRootDFile(
@@ -93,13 +97,11 @@ class XRootDFileSystem(AbstractFileSystem):
         self,
         path: str,
         mode: str = "rb",
-        block_size: int | None = None,
+        block_size: int | int | None = None,
         cache_options: dict[Any, Any] | None = None,
         compression: str | None = None,
-        **kwargs: dict[Any, Any],
-    ) -> Any:  # Placeholder type, better option?
-
-        import io
+        **kwargs: Any,
+    ) -> Any:  # returns text wrapper or XRootDFile
 
         path = self._strip_protocol(path)
         if "b" not in mode:
@@ -132,8 +134,8 @@ class XRootDFileSystem(AbstractFileSystem):
                 **kwargs,
             )
             if compression is not None:
-                from fsspec.compression import compr
-                from fsspec.core import get_compression
+                from fsspec.compression import compr  # type: ignore[import]
+                from fsspec.core import get_compression  # type: ignore[import]
 
                 compression = get_compression(path, compression)
                 compress = compr[compression]
@@ -144,13 +146,13 @@ class XRootDFileSystem(AbstractFileSystem):
             return f
 
 
-class XRootDFile(AbstractBufferedFile):
+class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
     def __init__(
         self,
         fs: XRootDFileSystem,
         path: str,
         mode: str = "rb",
-        block_size: int | str = "default",
+        block_size: int | str | None = "default",
         autocommit: bool = True,
         cache_type: str = "readahead",
         cache_options: dict[Any, Any] | None = None,
@@ -174,7 +176,7 @@ class XRootDFile(AbstractBufferedFile):
             raise NotImplementedError
 
         self._myFile = client.File()
-        stat, _n = self._myFile.open(
+        status, _n = self._myFile.open(
             fs.storage_options["protocol"]
             + "://"
             + fs.storage_options["hostid"]
@@ -183,9 +185,8 @@ class XRootDFile(AbstractBufferedFile):
             self.mode,
         )
 
-        if not stat.ok:
-            print(stat.message)
-            raise OSError
+        if not status.ok:
+            raise OSError(f"File did not open properly: {status.message}")
 
         self.path = path
         self.fs = fs
@@ -231,10 +232,11 @@ class XRootDFile(AbstractBufferedFile):
 
     def _fetch_range(self, start: int, end: int) -> Any:
         status, data = self._myFile.read(start, end - start)
+        if not status.ok:
+            raise OSError(f"File did not read properly: {status.message}")
         return data
 
     def close(self) -> None:
-        print("Closed!")
         if getattr(self, "_unclosable", False):
             return
         if self.closed:
@@ -248,5 +250,7 @@ class XRootDFile(AbstractBufferedFile):
             if self.fs is not None:
                 self.fs.invalidate_cache(self.path)
                 self.fs.invalidate_cache(self.fs._parent(self.path))
-        self._myFile.close()
+        status = self._myFile.close()
+        if not status.ok:
+            raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
