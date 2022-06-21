@@ -14,7 +14,6 @@ from XRootD.client.flags import (  # type: ignore[import]
     StatInfoFlags,
 )
 
-
 class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     # unpack storage_options as necessary
@@ -43,6 +42,58 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         }
 
     # Implement a new _strip_protocol?
+    def mkdir(
+        self, path: str, create_parents: bool = True, **kwargs: dict[Any, Any]
+    ) -> None:
+        if create_parents:
+            stat, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+        else:
+            stat, n = self._myclient.mkdir(path)
+        if not stat.ok:
+            print(stat.message)
+            raise OSError
+
+    def makedirs(self, path: str, exist_ok: bool = False) -> None:
+        stat, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+        if not stat.ok:
+            print(stat.message)
+            raise OSError
+        stat, statInfo = self._myclient.stat(path)
+        if not (statInfo.flags and StatInfoFlags.IS_DIR):
+            raise OSError
+
+    def rmdir(self, path: str) -> None:
+        stat, n = self._myclient.rmdir(path)
+        if not stat.ok:
+            print(stat.message)
+            raise OSError
+
+    def _rm(self, path: str) -> None:
+        stat, n = self._myclient.rm(path)
+        if not stat.ok:
+            print(stat.message)
+            raise OSError
+
+    def touch(self, path: str, truncate: bool = True, **kwargs: dict[Any, Any]) -> None:
+        if truncate or not self.exists(path):
+            with self.open(path, "wb", **kwargs):
+                pass
+        else:
+            with self.open(path, "a", **kwargs):
+                pass
+
+    def modified(self, path: str) -> Any:
+        stat, statInfo = self._myclient.stat(path)
+        return statInfo.modtimestr
+
+    def sign(self, path: str, expiration: int = 100, **kwargs: dict[Any, Any]) -> Any:
+        return (
+            self.storage_options["protocol"]
+            + "://"
+            + self.storage_options["hostid"]
+            + "//"
+            + self.storage_options["path_with_params"]
+        )
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
 
