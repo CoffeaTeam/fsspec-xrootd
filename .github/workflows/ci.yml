@@ -25,6 +25,7 @@ jobs:
         with:
           extra_args: --hook-stage manual --all-files
       - name: Run PyLint
+        continue-on-error: true
         run: |
           echo "::add-matcher::$GITHUB_WORKSPACE/.github/matchers/pylint.json"
           pipx run nox -s pylint
