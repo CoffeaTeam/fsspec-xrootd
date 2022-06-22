@@ -236,6 +236,57 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise OSError(f"File did not read properly: {status.message}")
         return data
 
+    def flush(self, force=False):
+        """
+        Write buffered data to backend store.
+        Writes the current buffer, if it is larger than the block-size, or if
+        the file is being closed.
+        Parameters
+        ----------
+        force: bool
+            When closing, write the last block even if it is smaller than
+            blocks are allowed to be. Disallows further writing to this file.
+        """
+
+        if self.closed:
+            raise ValueError("Flush on closed file")
+        if force and self.forced:
+            raise ValueError("Force flush cannot be called more than once")
+        if force:
+            self.forced = True
+
+        if self.mode not in {"wb", "ab"}:  # throw error?
+            # no-op to flush on read-mode
+            return
+
+        if not force and self.buffer.tell() < self.blocksize:  # throw error?
+            # Defer write on small block
+            return
+
+        if self.offset is None:
+            # Initialize a multipart upload
+            self.offset = 0
+            try:
+                self._initiate_upload()
+            except:  # noqa: E722
+                self.closed = True  # should we close file here?
+                raise
+
+        if self._upload_chunk(final=force) is not False:
+            self.offset += self.buffer.seek(0, 2)
+            self.buffer = io.BytesIO()
+
+    def _upload_chunk(self, final=False):
+        status, _n = self._myFile.write(self.buffer.getvalue(), self.offset, self.buffer.tell())
+        if final:
+            self.closed
+            self.close()
+        return status.ok # does this make sense? 
+
+    def _initiate_upload(self):
+        """Create remote file/upload"""
+        pass
+
     def close(self) -> None:
         if getattr(self, "_unclosable", False):
             return
