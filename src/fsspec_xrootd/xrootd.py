@@ -273,7 +273,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.buffer = io.BytesIO()
 
     def _upload_chunk(self, final=False):
-        #print("chunk")
         status, _n = self._myFile.write(self.buffer.getvalue(), self.offset, self.buffer.tell())
         if final:
             self.closed
