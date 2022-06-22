@@ -184,7 +184,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             + path,
             self.mode,
         )
-
+        #print("init")
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
 
@@ -237,6 +237,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         return data
 
     def flush(self, force=False):
+        #print("flush")
         """
         Write buffered data to backend store.
         Writes the current buffer, if it is larger than the block-size, or if
@@ -266,26 +267,18 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if self.offset is None:
             # Initialize a multipart upload
             self.offset = 0
-            try:
-                self._initiate_upload()
-            except:  # noqa: E722
-                self.closed = True  # should we close file here?
-                raise
 
         if self._upload_chunk(final=force) is not False:
             self.offset += self.buffer.seek(0, 2)
             self.buffer = io.BytesIO()
 
     def _upload_chunk(self, final=False):
+        #print("chunk")
         status, _n = self._myFile.write(self.buffer.getvalue(), self.offset, self.buffer.tell())
         if final:
             self.closed
             self.close()
-        return status.ok # does this make sense? 
-
-    def _initiate_upload(self):
-        """Create remote file/upload"""
-        pass
+        return status.ok
 
     def close(self) -> None:
         if getattr(self, "_unclosable", False):
@@ -301,7 +294,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             if self.fs is not None:
                 self.fs.invalidate_cache(self.path)
                 self.fs.invalidate_cache(self.fs._parent(self.path))
-        status = self._myFile.close()
+        status, _n = self._myFile.close()
         if not status.ok:
             raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
