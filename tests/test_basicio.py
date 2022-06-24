@@ -47,5 +47,5 @@ def test_read_xrd(localserver):
 
 
 def test_read_fsspec(localserver):
-    with fsspec.open(localserver + "/testfile.txt") as f:
+    with fsspec.open(localserver + "/testfile.txt", "rt") as f:
         assert f.read() == TESTDATA

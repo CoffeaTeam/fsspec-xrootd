@@ -1,5 +1,3 @@
-# Implementations of AbstractFileSystem and AbstractBufferedFile
-
 from __future__ import annotations
 
 import io
@@ -17,7 +15,9 @@ from XRootD.client.flags import (  # type: ignore[import]
 
 class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
-    # unpack storage_options as necessary
+    protocol = "root"
+    root_marker = "/"
+
     def __init__(self, *args: list[Any], **storage_options: str) -> None:
         self._path = storage_options["path"]
         self._myclient = client.FileSystem(
@@ -42,7 +42,11 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             "path_with_params": url.path_with_params,
         }
 
-    # Implement a new _strip_protocol?
+    @classmethod
+    def _strip_protocol(cls, path: str) -> Any:
+        url = client.URL(path)
+
+        return url.path
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
 
@@ -101,7 +105,8 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         cache_options: dict[Any, Any] | None = None,
         compression: str | None = None,
         **kwargs: Any,
-    ) -> Any:  # returns text wrapper or XRootDFile
+    ) -> Any:
+        """Returns text wrapper or XRootDFile."""
 
         path = self._strip_protocol(path)
         if "b" not in mode:
@@ -174,7 +179,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.mode = OpenFlags.READ
         else:
             raise NotImplementedError
-
         self._myFile = client.File()
         status, _n = self._myFile.open(
             fs.storage_options["protocol"]
@@ -184,7 +188,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             + path,
             self.mode,
         )
-        #print("init")
+
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
 
