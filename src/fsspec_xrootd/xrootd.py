@@ -1,5 +1,3 @@
-# Implementations of AbstractFileSystem and AbstractBufferedFile
-
 from __future__ import annotations
 
 import io
@@ -17,13 +15,7 @@ from XRootD.client.flags import (  # type: ignore[import]
 
 class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
-    cacheable = True  # this class can be cached, instances reused
-    _cached = False
-    blocksize = 2**22
-    sep = "/"
     protocol = "root"
-    _latest = None
-    async_impl = False
     root_marker = "/"
 
     def __init__(self, *args: list[Any], **storage_options: str) -> None:
@@ -50,7 +42,6 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             "path_with_params": url.path_with_params,
         }
 
-    # Implement a new _strip_protocol?
     @classmethod
     def _strip_protocol(cls, path: str) -> Any:
         url = client.URL(path)
@@ -114,7 +105,8 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         cache_options: dict[Any, Any] | None = None,
         compression: str | None = None,
         **kwargs: Any,
-    ) -> Any:  # returns text wrapper or XRootDFile
+    ) -> Any:
+        """Returns text wrapper or XRootDFile."""
 
         path = self._strip_protocol(path)
         if "b" not in mode:
