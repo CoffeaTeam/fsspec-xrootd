@@ -17,7 +17,15 @@ from XRootD.client.flags import (  # type: ignore[import]
 
 class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
-    # unpack storage_options as necessary
+    cachable = True  # this class can be cached, instances reused
+    _cached = False
+    blocksize = 2**22
+    sep = "/"
+    protocol = "root"
+    _latest = None
+    async_impl = False
+    root_marker = "/"
+
     def __init__(self, *args: list[Any], **storage_options: str) -> None:
         self._path = storage_options["path"]
         self._myclient = client.FileSystem(
@@ -43,6 +51,11 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         }
 
     # Implement a new _strip_protocol?
+    @classmethod
+    def _strip_protocol(cls, path: str) -> Any:
+        url = client.URL(path)
+
+        return url.path
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
 
@@ -174,7 +187,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.mode = OpenFlags.READ
         else:
             raise NotImplementedError
-
         self._myFile = client.File()
         status, _n = self._myFile.open(
             fs.storage_options["protocol"]
@@ -250,7 +262,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             if self.fs is not None:
                 self.fs.invalidate_cache(self.path)
                 self.fs.invalidate_cache(self.fs._parent(self.path))
-        status = self._myFile.close()
+        status, _n = self._myFile.close()
         if not status.ok:
             raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
