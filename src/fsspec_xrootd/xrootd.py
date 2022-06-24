@@ -17,7 +17,7 @@ from XRootD.client.flags import (  # type: ignore[import]
 
 class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
-    cachable = True  # this class can be cached, instances reused
+    cacheable = True  # this class can be cached, instances reused
     _cached = False
     blocksize = 2**22
     sep = "/"
