@@ -241,18 +241,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         return data
 
     def flush(self, force=False):
-        #print("flush")
-        """
-        Write buffered data to backend store.
-        Writes the current buffer, if it is larger than the block-size, or if
-        the file is being closed.
-        Parameters
-        ----------
-        force: bool
-            When closing, write the last block even if it is smaller than
-            blocks are allowed to be. Disallows further writing to this file.
-        """
-
         if self.closed:
             raise ValueError("Flush on closed file")
         if force and self.forced:
@@ -260,11 +248,11 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if force:
             self.forced = True
 
-        if self.mode not in {"wb", "ab"}:  # throw error?
+        if self.mode not in {"wb", "ab"}:
             # no-op to flush on read-mode
             return
 
-        if not force and self.buffer.tell() < self.blocksize:  # throw error?
+        if not force and self.buffer.tell() < self.blocksize:
             # Defer write on small block
             return
 
