@@ -230,7 +230,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             )
         else:
             self.buffer = io.BytesIO()
-            self.offset = None
+            self.offset = 0
             self.forced = False
             self.location = None
 
@@ -240,7 +240,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise OSError(f"File did not read properly: {status.message}")
         return data
 
-    def flush(self, force=False):
+    def flush(self, force: bool = False) -> None:
         if self.closed:
             raise ValueError("Flush on closed file")
         if force and self.forced:
@@ -256,16 +256,14 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             # Defer write on small block
             return
 
-        if self.offset is None:
-            # Initialize a multipart upload
-            self.offset = 0
-
         if self._upload_chunk(final=force) is not False:
             self.offset += self.buffer.seek(0, 2)
             self.buffer = io.BytesIO()
 
-    def _upload_chunk(self, final=False):
-        status, _n = self._myFile.write(self.buffer.getvalue(), self.offset, self.buffer.tell())
+    def _upload_chunk(self, final: bool = False) -> Any:
+        status, _n = self._myFile.write(
+            self.buffer.getvalue(), self.offset, self.buffer.tell()
+        )
         if final:
             self.closed
             self.close()
