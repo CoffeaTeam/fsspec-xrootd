@@ -55,6 +55,6 @@ def test_write_fsspec(localserver):
     TESTWRITEDATA = "the end is never the end is never the end"
     with fsspec.open(localserver + "/testfile2.txt", "wt") as f:
         _out = f.write(TESTWRITEDATA)
-        f.flush(True)
+        f.flush()
     with fsspec.open(localserver + "/testfile2.txt", "rt") as f:
         assert f.read() == TESTWRITEDATA
