@@ -170,7 +170,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if "x" in mode:
             self.mode = OpenFlags.NEW
         elif "a" in mode:
-            self.mode = OpenFlags.APPEND
+            self.mode = OpenFlags.UPDATE
         elif "+" in mode:
             self.mode = OpenFlags.UPDATE
         elif "w" in mode:
@@ -191,6 +191,11 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
+
+        self.metaOffset = 0
+        if "a" in mode:
+            _stats, _deets = self._myFile.stat()
+            self.metaOffset = _deets.size
 
         self.path = path
         self.fs = fs
@@ -230,12 +235,14 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             )
         else:
             self.buffer = io.BytesIO()
-            self.offset = 0
             self.forced = False
             self.location = None
+            self.offset = 0
 
     def _fetch_range(self, start: int, end: int) -> Any:
-        status, data = self._myFile.read(start, end - start)
+        status, data = self._myFile.read(
+            self.metaOffset + start, self.metaOffset + end - start
+        )
         if not status.ok:
             raise OSError(f"File did not read properly: {status.message}")
         return data
@@ -262,7 +269,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
     def _upload_chunk(self, final: bool = False) -> Any:
         status, _n = self._myFile.write(
-            self.buffer.getvalue(), self.offset, self.buffer.tell()
+            self.buffer.getvalue(), self.offset + self.metaOffset, self.buffer.tell()
         )
         if final:
             self.closed

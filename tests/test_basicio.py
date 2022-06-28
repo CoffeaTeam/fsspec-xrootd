@@ -58,3 +58,12 @@ def test_write_fsspec(localserver):
         f.flush()
     with fsspec.open(localserver + "/testfile2.txt", "rt") as f:
         assert f.read() == TESTWRITEDATA
+
+
+def test_append_fsspec(localserver):
+    TESTWRITEDATA = "the end is never the end is never the end"
+    with fsspec.open(localserver + "/testfile2.txt", "at") as f:
+        f.write(TESTWRITEDATA)
+        f.flush()
+    with fsspec.open(localserver + "/testfile2.txt", "rt") as f:
+        assert f.read() == TESTWRITEDATA + TESTWRITEDATA
