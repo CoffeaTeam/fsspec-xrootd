@@ -8,7 +8,8 @@ import time
 import fsspec
 import pytest
 
-TESTDATA = "apple banana orange grape"
+TESTDATA = "apple\nbanana\norange\ngrape"
+TESTWRITEDATA = "the end is never the end is never the end"
 
 
 @pytest.fixture(scope="module")
@@ -49,10 +50,19 @@ def test_read_xrd(localserver):
 def test_read_fsspec(localserver):
     with fsspec.open(localserver + "/testfile.txt", "rt") as f:
         assert f.read() == TESTDATA
+        f.seek(0)
+        assert f.readline() == "apple\n"
+        f.seek(0)
+        lns = f.readlines()
+        assert lns[2] == "orange\n"
+        f.seek(1)
+        assert f.read(1) == "p"
+        f.seek(0)
+        assert f.readuntil(b"e") == b"apple"
+
 
 
 def test_write_fsspec(localserver):
-    TESTWRITEDATA = "the end is never the end is never the end"
     with fsspec.open(localserver + "/testfile2.txt", "wt") as f:
         f.write(TESTWRITEDATA)
         f.flush()
@@ -61,9 +71,10 @@ def test_write_fsspec(localserver):
 
 
 def test_append_fsspec(localserver):
-    TESTWRITEDATA = "the end is never the end is never the end"
     with fsspec.open(localserver + "/testfile2.txt", "at") as f:
         f.write(TESTWRITEDATA)
         f.flush()
     with fsspec.open(localserver + "/testfile2.txt", "rt") as f:
         assert f.read() == TESTWRITEDATA + TESTWRITEDATA
+
+
