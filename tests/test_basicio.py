@@ -57,8 +57,12 @@ def test_read_fsspec(localserver):
         assert lns[2] == "orange\n"
         f.seek(1)
         assert f.read(1) == "p"
-        f.seek(0)
-        # assert f.readuntil(b"e") == b"apple"
+
+    with fsspec.open(localserver + "/testfile.txt", "rb") as f:
+        assert f.readuntil(b"e") == b"apple"
+
+    fs, token, path = fsspec.get_fs_token_paths(localserver + "/testfile.txt", "rt")
+    assert fs.read_block(path[0], 0, 4) == b"appl"
 
 
 def test_write_fsspec(localserver):
