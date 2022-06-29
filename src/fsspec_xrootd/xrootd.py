@@ -279,7 +279,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
     def close(self) -> None:
         if getattr(self, "_unclosable", False):
             return
-        if self.closed:
+        if self.closed or not self._myFile.is_open():
             return
         if self.mode == "rb":
             self.cache = None
