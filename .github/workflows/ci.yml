@@ -37,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.7.12", "3.10"]
+        python-version: ["3.7", "3.10"]
         runs-on: [ubuntu-latest, macos-latest]
 
     steps:
@@ -54,7 +54,7 @@ jobs:
       - name: Install build environment
         shell: bash -l {0}
         run: |
-          mamba install -c conda-forge python==${{ matrix.python-version }} xrootd>=5.4.3
+          mamba install -c conda-forge python==${{ matrix.python-version }} xrootd
       - name: Install package
         shell: bash -l {0}
         run: python -m pip install .[test]
