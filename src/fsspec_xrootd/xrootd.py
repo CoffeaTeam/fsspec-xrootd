@@ -170,7 +170,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if "x" in mode:
             self.mode = OpenFlags.NEW
         elif "a" in mode:
-            self.mode = OpenFlags.APPEND
+            self.mode = OpenFlags.UPDATE
         elif "+" in mode:
             self.mode = OpenFlags.UPDATE
         elif "w" in mode:
@@ -191,6 +191,11 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
+
+        self.metaOffset = 0
+        if "a" in mode:
+            _stats, _deets = self._myFile.stat()
+            self.metaOffset = _deets.size
 
         self.path = path
         self.fs = fs
@@ -230,20 +235,53 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             )
         else:
             self.buffer = io.BytesIO()
-            self.offset = None
             self.forced = False
             self.location = None
+            self.offset = 0
 
     def _fetch_range(self, start: int, end: int) -> Any:
-        status, data = self._myFile.read(start, end - start)
+        status, data = self._myFile.read(
+            self.metaOffset + start, self.metaOffset + end - start
+        )
         if not status.ok:
             raise OSError(f"File did not read properly: {status.message}")
         return data
 
+    def flush(self, force: bool = False) -> None:
+        if self.closed:
+            raise ValueError("Flush on closed file")
+        if force and self.forced:
+            raise ValueError("Force flush cannot be called more than once")
+        if force:
+            self.forced = True
+
+        if self.mode not in {"wb", "ab"}:
+            # no-op to flush on read-mode
+            return
+
+        if not force and self.buffer.tell() < self.blocksize:
+            # Defer write on small block
+            return
+
+        if self._upload_chunk(final=force) is not False:
+            self.offset += self.buffer.seek(0, 2)
+            self.buffer = io.BytesIO()
+
+    def _upload_chunk(self, final: bool = False) -> Any:
+        status, _n = self._myFile.write(
+            self.buffer.getvalue(), self.offset + self.metaOffset, self.buffer.tell()
+        )
+        if final:
+            self.closed
+            self.close()
+        if not status.ok:
+            raise OSError(f"File did not write properly: {status.message}")
+        return status.ok
+
     def close(self) -> None:
         if getattr(self, "_unclosable", False):
             return
-        if self.closed:
+        if self.closed or not self._myFile.is_open():
             return
         if self.mode == "rb":
             self.cache = None
