@@ -274,7 +274,8 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if final:
             self.closed
             self.close()
-        print("Upload Chunk: " + str(status.ok))
+        if not status.ok:
+            raise OSError(f"File did not write properly: {status.message}")
         return status.ok
 
     def close(self) -> None:
