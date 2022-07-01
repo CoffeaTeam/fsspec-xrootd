@@ -54,7 +54,7 @@ jobs:
       - name: Install build environment
         shell: bash -l {0}
         run: |
-          mamba install -c conda-forge python==${{ matrix.python-version }} "xrootd>=5.4.3"
+          mamba install -c conda-forge python=${{ matrix.python-version }} "xrootd>=5.4.3"
       - name: Install package
         shell: bash -l {0}
         run: python -m pip install .[test]
