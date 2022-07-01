@@ -33,6 +33,15 @@ def test_broken_server():
         _ = fsspec.open("root://localhost:12345/")
 
 
+def test_ping(localserver):
+    from XRootD import client
+
+    fs = client.FileSystem(localserver)
+    status, _n = fs.ping()
+    if not status.ok:
+        raise OSError(f"Server did not run properly: {status.message}")
+
+
 def test_read_xrd(localserver):
     from XRootD import client
 
