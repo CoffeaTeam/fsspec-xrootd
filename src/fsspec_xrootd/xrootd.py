@@ -48,6 +48,53 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
         return url.path
 
+    def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
+        if create_parents:
+            status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+        else:
+            status, n = self._myclient.mkdir(path)
+        if not status.ok:
+            raise OSError(f"Directory not made properly: {status.message}")
+
+    def makedirs(self, path: str, exist_ok: bool = False) -> None:
+        status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+        if not status.ok:
+            raise OSError(f"Directories not made properly: {status.message}")
+        status, statInfo = self._myclient.stat(path)
+        if not (statInfo.flags and StatInfoFlags.IS_DIR):
+            raise OSError("Path leads to file")
+
+    def rmdir(self, path: str) -> None:
+        status, n = self._myclient.rmdir(path)
+        if not status.ok:
+            raise OSError(f"Directory not removed properly: {status.message}")
+
+    def _rm(self, path: str) -> None:
+        status, n = self._myclient.rm(path)
+        if not status.ok:
+            raise OSError(f"File not removed properly: {status.message}")
+
+    def touch(self, path: str, truncate: bool = True, **kwargs: Any) -> None:
+        if truncate or not self.exists(path):
+            with self.open(path, "wb", **kwargs):
+                pass
+        else:
+            with self.open(path, "a", **kwargs):
+                pass
+
+    def modified(self, path: str) -> Any:
+        status, statInfo = self._myclient.stat(path)
+        return statInfo.modtimestr
+
+    def sign(self, path: str, expiration: int = 100, **kwargs: Any) -> Any:
+        return (
+            self.storage_options["protocol"]
+            + "://"
+            + self.storage_options["hostid"]
+            + "//"
+            + self.storage_options["path_with_params"]
+        )
+
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
 
         stats, deets = self._myclient.dirlist(path, DirListFlags.STAT)
