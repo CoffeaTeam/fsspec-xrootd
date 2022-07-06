@@ -8,6 +8,7 @@ from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore
 from XRootD import client  # type: ignore[import]
 from XRootD.client.flags import (  # type: ignore[import]
     DirListFlags,
+    MkDirFlags,
     OpenFlags,
     StatInfoFlags,
 )
@@ -54,12 +55,14 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         else:
             status, n = self._myclient.mkdir(path)
         if not status.ok:
-            raise OSError(f"Directory not made properly: {status.message}")
+            if status.code != 400:
+                raise OSError(f"Directory not made properly: {status.message}")
 
     def makedirs(self, path: str, exist_ok: bool = False) -> None:
         status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
         if not status.ok:
-            raise OSError(f"Directories not made properly: {status.message}")
+            if status.code != 400:
+                raise OSError(f"Directory not made properly: {status.message}")
         status, statInfo = self._myclient.stat(path)
         if not (statInfo.flags and StatInfoFlags.IS_DIR):
             raise OSError("Path leads to file")
