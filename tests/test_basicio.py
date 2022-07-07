@@ -88,3 +88,38 @@ def test_append_fsspec(localserver):
         f.flush()
     with fsspec.open(localserver + "/testfile2.txt", "rt") as f:
         assert f.read() == TESTWRITEDATA + TESTWRITEDATA
+
+
+def test_dir(localserver):
+    with fsspec.open(localserver + "/Folder/Test1/test1.txt", "wt") as f:
+        f.write(TESTWRITEDATA)
+        f.flush()
+    with fsspec.open(localserver + "/Folder/Test2/test2.txt", "wt") as f:
+        f.write(TESTWRITEDATA)
+        f.flush()
+    fs, token, path = fsspec.get_fs_token_paths(localserver, "rt")
+    assert fs.ls(path[0], False) == ["testfile.txt", "testfile2.txt", "Folder"]
+    fs.mkdir(path[0] + "/testfile3.txt")
+    assert set(fs.ls(path[0], False)) == {
+        "testfile.txt",
+        "testfile2.txt",
+        "testfile3.txt",
+        "Folder",
+    }
+    fs.mkdirs(path[0] + "/testfile4.txt")
+    assert set(fs.ls(path[0], False)) == {
+        "testfile.txt",
+        "testfile2.txt",
+        "testfile3.txt",
+        "testfile4.txt",
+        "Folder",
+    }
+    fs.mkdirs(path[0] + "/testfile4.txt", True)
+
+    fs.rm(path[0] + "/Folder", True)
+    assert set(fs.ls(path[0], False)) == {
+        "testfile.txt",
+        "testfile2.txt",
+        "testfile3.txt",
+        "testfile4.txt",
+    }

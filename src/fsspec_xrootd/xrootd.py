@@ -4,6 +4,7 @@ import io
 import warnings
 from typing import Any
 
+from fsspec.dircache import DirCache
 from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
 from XRootD import client  # type: ignore[import]
 from XRootD.client.flags import (  # type: ignore[import]
@@ -26,6 +27,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         )
         self.storage_options = storage_options
         self._intrans = False
+        self.dircache = DirCache(**storage_options)
 
     @staticmethod
     def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
@@ -55,17 +57,21 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         else:
             status, n = self._myclient.mkdir(path)
         if not status.ok:
-            if status.code != 400:
-                raise OSError(f"Directory not made properly: {status.message}")
+            raise OSError(f"Directory not made properly: {status.message}")
 
     def makedirs(self, path: str, exist_ok: bool = False) -> None:
-        status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
-        if not status.ok:
-            if status.code != 400:
-                raise OSError(f"Directory not made properly: {status.message}")
-        status, statInfo = self._myclient.stat(path)
-        if not (statInfo.flags and StatInfoFlags.IS_DIR):
-            raise OSError("Path leads to file")
+        status, _ = self._myclient.stat(path)
+        if status.ok and exist_ok:
+            return
+        elif status.ok and not exist_ok:
+            raise OSError("Directory already exists, arg exist_ok is set to false")
+        else:
+            if status.code == 400:
+                status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+                if not status.ok:
+                    raise OSError(f"Directory not made properly: {status.message}")
+            else:
+                raise OSError(f"Directory status check failed: {status.message}")
 
     def rmdir(self, path: str) -> None:
         status, n = self._myclient.rmdir(path)
@@ -106,21 +112,31 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
         if detail:
             for item in deets:
-                t = ""
-                if item.statinfo.flags and StatInfoFlags.IS_DIR:
-                    t = "directory"
-                elif item.statinfo.flags and StatInfoFlags.OTHER:
-                    t = "other"
+                if item.statinfo.flags & StatInfoFlags.IS_DIR:
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "directory",
+                        }
+                    )
+                elif item.statinfo.flags & StatInfoFlags.OTHER:
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "other",
+                        }
+                    )
                 else:
-                    t = "file"
-
-                listing.append(
-                    {
-                        "name": path + "/" + item.name,
-                        "size": item.statinfo.size,
-                        "type": t,
-                    }
-                )
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "file",
+                        }
+                    )
+            self.dircache.__setitem__(path, listing)
         else:
             for item in deets:
                 listing.append(item.name)
@@ -220,8 +236,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if "x" in mode:
             self.mode = OpenFlags.NEW
         elif "a" in mode:
-            self.mode = OpenFlags.UPDATE
-        elif "+" in mode:
             self.mode = OpenFlags.UPDATE
         elif "w" in mode:
             self.mode = OpenFlags.DELETE
