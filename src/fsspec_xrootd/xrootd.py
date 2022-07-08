@@ -4,7 +4,7 @@ import io
 import warnings
 from typing import Any
 
-from fsspec.dircache import DirCache
+from fsspec.dircache import DirCache  # type: ignore[import]
 from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
 from XRootD import client  # type: ignore[import]
 from XRootD.client.flags import (  # type: ignore[import]
@@ -25,6 +25,10 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
         )
+        status, _n = self._myclient.ping()
+        print(status.ok)
+        if not status.ok:
+            raise OSError(f"Server did not run properly: {status.message}")
         self.storage_options = storage_options
         self._intrans = False
         self.dircache = DirCache(**storage_options)
@@ -136,7 +140,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                             "type": "file",
                         }
                     )
-            self.dircache.__setitem__(path, listing)
+            self.dircache[path] = listing
         else:
             for item in deets:
                 listing.append(item.name)
@@ -233,6 +237,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         from fsspec.core import caches
 
         # by this point, mode will have a "b" in it
+        # update "+" mode removed for now since seek() is read only
         if "x" in mode:
             self.mode = OpenFlags.NEW
         elif "a" in mode:

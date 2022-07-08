@@ -28,7 +28,7 @@ def localserver(tmpdir_factory):
 
 @pytest.mark.skip("not implemented")
 def test_broken_server():
-    with pytest.raises(IOError):
+    with pytest.raises(OSError):
         # try to connect on the wrong port should fail
         _ = fsspec.open("root://localhost:12345/")
 
@@ -90,7 +90,7 @@ def test_append_fsspec(localserver):
         assert f.read() == TESTWRITEDATA + TESTWRITEDATA
 
 
-def test_dir(localserver):
+def test_mkdir_fsspec(localserver):
     with fsspec.open(localserver + "/Folder/Test1/test1.txt", "wt") as f:
         f.write(TESTWRITEDATA)
         f.flush()
@@ -99,27 +99,44 @@ def test_dir(localserver):
         f.flush()
     fs, token, path = fsspec.get_fs_token_paths(localserver, "rt")
     assert fs.ls(path[0], False) == ["testfile.txt", "testfile2.txt", "Folder"]
-    fs.mkdir(path[0] + "/testfile3.txt")
+    fs.mkdir(path[0] + "/Folder2/testfile3.txt")
     assert set(fs.ls(path[0], False)) == {
         "testfile.txt",
         "testfile2.txt",
-        "testfile3.txt",
+        "Folder2",
         "Folder",
     }
+
+    try:
+        fs.mkdir(path[0] + "/Folder3/testfile3.txt", False)
+        a = False
+    except:
+        a = True
+    assert a
+
     fs.mkdirs(path[0] + "/testfile4.txt")
     assert set(fs.ls(path[0], False)) == {
         "testfile.txt",
         "testfile2.txt",
-        "testfile3.txt",
+        "Folder2",
         "testfile4.txt",
         "Folder",
     }
     fs.mkdirs(path[0] + "/testfile4.txt", True)
 
+    with pytest.raises(OSError):
+        fs.mkdirs(path[0] + "/testfile4.txt", False)
+
     fs.rm(path[0] + "/Folder", True)
     assert set(fs.ls(path[0], False)) == {
         "testfile.txt",
         "testfile2.txt",
-        "testfile3.txt",
+        "Folder2",
         "testfile4.txt",
     }
+
+    with pytest.raises(OSError):
+        fs.rm(path[0] + "/Folder2", False)
+
+#def test_misc_fsspec(localserver):
+
