@@ -25,10 +25,9 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
         )
-        status, _n = self._myclient.ping()
-        print(status.ok)
+        status, _n = self._myclient.ping(1)
         if not status.ok:
-            raise OSError(f"Server did not run properly: {status.message}")
+            raise OSError("Server ping took too long")
         self.storage_options = storage_options
         self._intrans = False
         self.dircache = DirCache(**storage_options)

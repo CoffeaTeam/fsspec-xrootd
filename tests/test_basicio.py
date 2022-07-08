@@ -26,7 +26,6 @@ def localserver(tmpdir_factory):
     proc.wait(timeout=10)
 
 
-@pytest.mark.skip("not implemented")
 def test_broken_server():
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
@@ -107,12 +106,8 @@ def test_mkdir_fsspec(localserver):
         "Folder",
     }
 
-    try:
+    with pytest.raises(OSError):
         fs.mkdir(path[0] + "/Folder3/testfile3.txt", False)
-        a = False
-    except:
-        a = True
-    assert a
 
     fs.mkdirs(path[0] + "/testfile4.txt")
     assert set(fs.ls(path[0], False)) == {
@@ -138,5 +133,5 @@ def test_mkdir_fsspec(localserver):
     with pytest.raises(OSError):
         fs.rm(path[0] + "/Folder2", False)
 
-#def test_misc_fsspec(localserver):
 
+# def test_misc_fsspec(localserver):
