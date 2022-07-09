@@ -63,18 +63,15 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             raise OSError(f"Directory not made properly: {status.message}")
 
     def makedirs(self, path: str, exist_ok: bool = False) -> None:
-        status, _ = self._myclient.stat(path)
-        if status.ok and exist_ok:
+        exist = self.exists(path)
+        if exist and exist_ok:
             return
-        elif status.ok and not exist_ok:
-            raise OSError("Directory already exists, arg exist_ok is set to false")
+        elif exist and not exist_ok:
+            raise OSError("Location already exists and exist_ok arg was set to false")
         else:
-            if status.code == 400:
-                status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
-                if not status.ok:
-                    raise OSError(f"Directory not made properly: {status.message}")
-            else:
-                raise OSError(f"Directory status check failed: {status.message}")
+            status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+            if not status.ok:
+                raise OSError(f"Directory not made properly: {status.message}")
 
     def rmdir(self, path: str) -> None:
         status, n = self._myclient.rmdir(path)
@@ -89,10 +86,10 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
     def touch(self, path: str, truncate: bool = True, **kwargs: Any) -> None:
         if truncate or not self.exists(path):
             with self.open(path, "wb", **kwargs):
-                pass
+                return
         else:
             with self.open(path, "a", **kwargs):
-                pass
+                return
 
     def modified(self, path: str) -> Any:
         status, statInfo = self._myclient.stat(path)
@@ -106,6 +103,37 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             + "//"
             + self.storage_options["path_with_params"]
         )
+
+    def exists(self, path: str, **kwargs: Any) -> bool | Any:
+        status, _ = self._myclient.stat(path)
+        if not status.ok:
+            if status.code == 400:
+                return False
+            else:
+                raise OSError(f"status check failed with message: {status.message}")
+        else:
+            return True
+
+    def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        status, deet = self._myclient.stat(path)
+        if deet.flags & StatInfoFlags.IS_DIR:
+            return {
+                "name": path,
+                "size": deet.size,
+                "type": "directory",
+            }
+        elif deet.flags & StatInfoFlags.OTHER:
+            return {
+                "name": path,
+                "size": deet.size,
+                "type": "other",
+            }
+        else:
+            return {
+                "name": path,
+                "size": deet.size,
+                "type": "file",
+            }
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
 
@@ -143,7 +171,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         else:
             for item in deets:
                 listing.append(item.name)
-
+            self.dircache[path] = listing
         return listing
 
     def _open(

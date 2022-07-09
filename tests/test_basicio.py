@@ -26,6 +26,7 @@ def localserver(tmpdir_factory):
     proc.wait(timeout=10)
 
 
+@pytest.mark.skip("not implemented")
 def test_broken_server():
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
@@ -89,7 +90,7 @@ def test_append_fsspec(localserver):
         assert f.read() == TESTWRITEDATA + TESTWRITEDATA
 
 
-def test_mkdir_fsspec(localserver):
+def test_mk_and_rm_dir_fsspec(localserver):
     with fsspec.open(localserver + "/Folder/Test1/test1.txt", "wt") as f:
         f.write(TESTWRITEDATA)
         f.flush()
@@ -132,6 +133,19 @@ def test_mkdir_fsspec(localserver):
 
     with pytest.raises(OSError):
         fs.rm(path[0] + "/Folder2", False)
+    with pytest.raises(OSError):
+        fs.rmdir(path[0] + "/Folder2")
 
 
-# def test_misc_fsspec(localserver):
+def test_dir_cache(localserver):
+    fs, token, path = fsspec.get_fs_token_paths(localserver, "rt")
+    dirs = fs.ls(path[0], False)
+    dirs_cached = fs._ls_from_cache(path[0])
+    assert dirs == dirs_cached
+    dirs = fs.ls(path[0], True)
+    dirs_cached = fs._ls_from_cache(path[0])
+    assert dirs == dirs_cached
+
+def test_info(localserver):
+    fs, token, path = fsspec.get_fs_token_paths(localserver, "rt")
+    assert fs.info(path[0]+"testfile.txt") in fs.ls(path[0], True)
