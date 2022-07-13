@@ -57,6 +57,12 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             "path_with_params": url.path_with_params,
         }
 
+    def invalidate_cache(self, path=None):
+        if path == None:
+            self.dircache.clear()
+        else:
+            self.dircache.__delitem__(path)
+
     @classmethod
     def _strip_protocol(cls, path: str) -> Any:
         url = client.URL(path)
