@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import warnings
 from typing import Any
+import os.path
 
 from fsspec.dircache import DirCache  # type: ignore[import]
 from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
@@ -30,7 +31,11 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             raise OSError("Server ping took too long")
         self.storage_options = storage_options
         self._intrans = False
-        self.dircache = DirCache(**storage_options)
+        try:
+            exp = storage_options["listings_expiry_time"]
+        except:
+            exp = None
+        self.dircache = DirCache(True, exp)
 
     @staticmethod
     def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
@@ -115,33 +120,58 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             return True
 
     def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
-        status, deet = self._myclient.stat(path)
-        if deet.flags & StatInfoFlags.IS_DIR:
+        spath = os.path.split(path)
+        try:
+            deet = self._ls_from_cache[spath[0]]
+            filter(lambda name: name['name'] == spath[1], deet)
+            print("cached")
             return {
-                "name": path,
-                "size": deet.size,
-                "type": "directory",
-            }
-        elif deet.flags & StatInfoFlags.OTHER:
-            return {
-                "name": path,
-                "size": deet.size,
-                "type": "other",
-            }
-        else:
-            return {
-                "name": path,
-                "size": deet.size,
-                "type": "file",
-            }
+                    "name": path,
+                    "size": deet[0]["size"],
+                    "type": deet[0]["type"],
+                }
+        except:
+            status, deet = self._myclient.stat(path)
+            if not status.ok:
+                raise OSError(f"File stat request failed: {status.message}")
+            print("server")
+            if deet.flags & StatInfoFlags.IS_DIR:
+                ret = {
+                    "name": path,
+                    "size": deet.size,
+                    "type": "directory",
+                }
+            elif deet.flags & StatInfoFlags.OTHER:
+                ret = {
+                    "name": path,
+                    "size": deet.size,
+                    "type": "other",
+                }
+            else:
+                ret = {
+                    "name": path,
+                    "size": deet.size,
+                    "type": "file",
+                }
+            self.dircache[spath[0]] = ret
+            return ret
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
-
-        stats, deets = self._myclient.dirlist(path, DirListFlags.STAT)
-
         listing = []
-
-        if detail:
+        try:
+            if detail:
+                listing = self._ls_from_cache[path]
+            else:
+                for item in self._ls_from_cache[path]:
+                    if item["name"][-1] == "/":
+                        item["name"] = item["name"][:-1]
+                    spath = os.path.split(item["name"])
+                    listing.append(spath[1])
+            return listing
+        except:
+            status, deets = self._myclient.dirlist(path, DirListFlags.STAT)
+            if not status.ok:
+                raise OSError(f"Server failed to provide directory info: {status.message}")
             for item in deets:
                 if item.statinfo.flags & StatInfoFlags.IS_DIR:
                     listing.append(
@@ -168,11 +198,16 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                         }
                     )
             self.dircache[path] = listing
-        else:
-            for item in deets:
-                listing.append(item.name)
-            self.dircache[path] = listing
-        return listing
+            if detail:
+                return listing
+            else:
+                miniListing = []
+                for item in listing:
+                    if item["name"][-1] == "/":
+                        item["name"] = item["name"][:-1]
+                    spath = os.path.split(item["name"])
+                    miniListing.append(spath[1])
+                return miniListing
 
     def _open(
         self,
