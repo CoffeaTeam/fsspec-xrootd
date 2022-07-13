@@ -97,7 +97,9 @@ def test_mk_and_rm_dir_fsspec(localserver):
     with fsspec.open(localserver + "/Folder/Test2/test2.txt", "wt") as f:
         f.write(TESTWRITEDATA)
         f.flush()
-    fs, token, path = fsspec.get_fs_token_paths(localserver, "rt", storage_options = {"listings_expiry_time": .5})
+    fs, token, path = fsspec.get_fs_token_paths(
+        localserver, "rt", storage_options={"listings_expiry_time": 0.5}
+    )
     assert fs.ls(path[0], False) == ["testfile.txt", "testfile2.txt", "Folder"]
     fs.mkdir(path[0] + "/Folder2/testfile3.txt")
     time.sleep(1)
@@ -141,14 +143,18 @@ def test_mk_and_rm_dir_fsspec(localserver):
 
 
 def test_dir_cache(localserver):
-    fs, token, path = fsspec.get_fs_token_paths(localserver, "rt", storage_options = {"listings_expiry_time": .5})
+    fs, token, path = fsspec.get_fs_token_paths(
+        localserver, "rt", storage_options={"listings_expiry_time": 0.5}
+    )
     dirs = fs.ls(path[0], True)
     dirs_cached = fs._ls_from_cache(path[0])
     assert dirs == dirs_cached
 
 
 def test_info(localserver):
-    fs, token, path = fsspec.get_fs_token_paths(localserver, "rt", storage_options = {"listings_expiry_time": .5})
+    fs, token, path = fsspec.get_fs_token_paths(
+        localserver, "rt", storage_options={"listings_expiry_time": 0.5}
+    )
     time.sleep(1)
     assert fs.info(path[0] + "/testfile.txt") in fs.ls(path[0], True)
     assert fs.info(path[0] + "/testfile.txt") in fs.ls(path[0], True)

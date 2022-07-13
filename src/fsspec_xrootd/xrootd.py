@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import io
+import os.path
 import warnings
 from typing import Any
-import os.path
 
 from fsspec.dircache import DirCache  # type: ignore[import]
 from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
@@ -21,19 +21,23 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
     protocol = "root"
     root_marker = "/"
 
-    def __init__(self, *args: list[Any], **storage_options: str) -> None:
+    def __init__(self, *args: list[Any], **storage_options: Any) -> None:
+        try:
+            self.timeout = storage_options["timeout"]
+        except Exception:
+            self.timeout = 0
         self._path = storage_options["path"]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
         )
-        status, _n = self._myclient.ping(1)
+        status, _n = self._myclient.ping(self.timeout)
         if not status.ok:
             raise OSError("Server ping took too long")
         self.storage_options = storage_options
         self._intrans = False
         try:
             exp = storage_options["listings_expiry_time"]
-        except:
+        except Exception:
             exp = None
         self.dircache = DirCache(True, exp)
 
@@ -61,9 +65,11 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
         if create_parents:
-            status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+            status, n = self._myclient.mkdir(
+                path, MkDirFlags.MAKEPATH, timeout=self.timeout
+            )
         else:
-            status, n = self._myclient.mkdir(path)
+            status, n = self._myclient.mkdir(path, timeout=self.timeout)
         if not status.ok:
             raise OSError(f"Directory not made properly: {status.message}")
 
@@ -74,30 +80,32 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         elif exist and not exist_ok:
             raise OSError("Location already exists and exist_ok arg was set to false")
         else:
-            status, n = self._myclient.mkdir(path, MkDirFlags.MAKEPATH)
+            status, n = self._myclient.mkdir(
+                path, MkDirFlags.MAKEPATH, timeout=self.timeout
+            )
             if not status.ok:
                 raise OSError(f"Directory not made properly: {status.message}")
 
     def rmdir(self, path: str) -> None:
-        status, n = self._myclient.rmdir(path)
+        status, n = self._myclient.rmdir(path, timeout=self.timeout)
         if not status.ok:
             raise OSError(f"Directory not removed properly: {status.message}")
 
     def _rm(self, path: str) -> None:
-        status, n = self._myclient.rm(path)
+        status, n = self._myclient.rm(path, timeout=self.timeout)
         if not status.ok:
             raise OSError(f"File not removed properly: {status.message}")
 
     def touch(self, path: str, truncate: bool = True, **kwargs: Any) -> None:
         if truncate or not self.exists(path):
-            with self.open(path, "wb", **kwargs):
+            with self.open(path, "wb", timeout=self.timeout, **kwargs):
                 return
         else:
-            with self.open(path, "a", **kwargs):
+            with self.open(path, "a", timeout=self.timeout, **kwargs):
                 return
 
     def modified(self, path: str) -> Any:
-        status, statInfo = self._myclient.stat(path)
+        status, statInfo = self._myclient.stat(path, timeout=self.timeout)
         return statInfo.modtimestr
 
     def sign(self, path: str, expiration: int = 100, **kwargs: Any) -> Any:
@@ -110,7 +118,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         )
 
     def exists(self, path: str, **kwargs: Any) -> bool | Any:
-        status, _ = self._myclient.stat(path)
+        status, _ = self._myclient.stat(path, timeout=self.timeout)
         if not status.ok:
             if status.code == 400:
                 return False
@@ -123,18 +131,16 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         spath = os.path.split(path)
         try:
             deet = self._ls_from_cache[spath[0]]
-            filter(lambda name: name['name'] == spath[1], deet)
-            print("cached")
+            filter(lambda name: name["name"] == spath[1], deet)
             return {
-                    "name": path,
-                    "size": deet[0]["size"],
-                    "type": deet[0]["type"],
-                }
-        except:
-            status, deet = self._myclient.stat(path)
+                "name": path,
+                "size": deet[0]["size"],
+                "type": deet[0]["type"],
+            }
+        except Exception:
+            status, deet = self._myclient.stat(path, timeout=self.timeout)
             if not status.ok:
                 raise OSError(f"File stat request failed: {status.message}")
-            print("server")
             if deet.flags & StatInfoFlags.IS_DIR:
                 ret = {
                     "name": path,
@@ -168,10 +174,14 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                     spath = os.path.split(item["name"])
                     listing.append(spath[1])
             return listing
-        except:
-            status, deets = self._myclient.dirlist(path, DirListFlags.STAT)
+        except Exception:
+            status, deets = self._myclient.dirlist(
+                path, DirListFlags.STAT, timeout=self.timeout
+            )
             if not status.ok:
-                raise OSError(f"Server failed to provide directory info: {status.message}")
+                raise OSError(
+                    f"Server failed to provide directory info: {status.message}"
+                )
             for item in deets:
                 if item.statinfo.flags & StatInfoFlags.IS_DIR:
                     listing.append(
@@ -298,6 +308,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
     ) -> None:
         from fsspec.core import caches
 
+        self.timeout = fs.timeout
         # by this point, mode will have a "b" in it
         # update "+" mode removed for now since seek() is read only
         if "x" in mode:
@@ -318,6 +329,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             + "/"
             + path,
             self.mode,
+            timeout=self.timeout,
         )
 
         if not status.ok:
@@ -325,7 +337,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         self.metaOffset = 0
         if "a" in mode:
-            _stats, _deets = self._myFile.stat()
+            _stats, _deets = self._myFile.stat(timeout=self.timeout)
             self.metaOffset = _deets.size
 
         self.path = path
@@ -372,7 +384,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
     def _fetch_range(self, start: int, end: int) -> Any:
         status, data = self._myFile.read(
-            self.metaOffset + start, self.metaOffset + end - start
+            self.metaOffset + start, self.metaOffset + end - start, timeout=self.timeout
         )
         if not status.ok:
             raise OSError(f"File did not read properly: {status.message}")
@@ -400,7 +412,10 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
     def _upload_chunk(self, final: bool = False) -> Any:
         status, _n = self._myFile.write(
-            self.buffer.getvalue(), self.offset + self.metaOffset, self.buffer.tell()
+            self.buffer.getvalue(),
+            self.offset + self.metaOffset,
+            self.buffer.tell(),
+            timeout=self.timeout,
         )
         if final:
             self.closed
@@ -423,7 +438,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             if self.fs is not None:
                 self.fs.invalidate_cache(self.path)
                 self.fs.invalidate_cache(self.fs._parent(self.path))
-        status, _n = self._myFile.close()
+        status, _n = self._myFile.close(timeout=self.timeout)
         if not status.ok:
             raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
