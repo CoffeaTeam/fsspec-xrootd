@@ -11,7 +11,7 @@ import pytest
 TESTDATA = "apple\nbanana\norange\ngrape"
 TESTWRITEDATA = "the end is never the end is never the end"
 sleep_time = 1
-expiry_time = .1
+expiry_time = 0.1
 
 
 @pytest.fixture(scope="module")
@@ -147,6 +147,7 @@ def test_mk_and_rm_dir_fsspec(localserver):
     fs.mkdir(path[0] + "/Folder3", False)
     time.sleep(1)
 
+
 @pytest.mark.skip("not implemented")
 def test_touch_modified(localserver):
     fs, token, path = fsspec.get_fs_token_paths(
@@ -162,7 +163,9 @@ def test_touch_modified(localserver):
     fs.touch(path[0] + "/testfile.txt", True)
     t3 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b""
-    assert t1 < t2 and t2 < t3
+    assert (
+        t1 < t2 and t2 < t3
+    )  # for some reason, touching without truncation doesn't update the mod time!?
 
 
 def test_dir_cache(localserver):
@@ -190,37 +193,54 @@ def test_sign(localserver):
     )
     print(fs.sign(path[0]))
     print(localserver)
-    assert fs.sign(path[0]) == localserver
+    assert fs.sign(path[0]) == localserver  # why do these disagree?
 
 
-@pytest.mark.skip("not implemented")
 def test_walk_find(localserver):
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
-    time.sleep(sleep_time)
-    out = fs.walk(path[0])
+    with fsspec.open(localserver + "/WalkFolder/testfile1.txt", "wt") as f:
+        f.write(TESTWRITEDATA)
+        f.flush()
+    with fsspec.open(localserver + "/WalkFolder/InnerFolder/testfile2.txt", "wt") as f:
+        f.write(TESTWRITEDATA)
+        f.flush()
+    out = fs.walk(path[0] + "/WalkFolder")
+    listing = []
     for item in out:
-        print(item)
-    out = fs.find(path[0])
+        listing.append(item)
+    assert listing == [
+        (path[0] + "/WalkFolder", ["InnerFolder"], ["testfile1.txt"]),
+        (path[0] + "/WalkFolder/InnerFolder", [], ["testfile2.txt"]),
+    ]
+    # unable to use sets here^, would rather
+    out = fs.find(path[0] + "/WalkFolder")
+    listing = []
     for item in out:
-        print(item)
-    assert 1 == 0
+        listing.append(item)
+    assert set(listing) == {
+        path[0] + "/WalkFolder/InnerFolder/testfile2.txt",
+        path[0] + "/WalkFolder/testfile1.txt",
+    }
 
-@pytest.mark.skip("not implemented")
+
 def test_du(localserver):
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
-    time.sleep(sleep_time)
-    print(fs.du(path[0], False))
-    assert 1 == 0
+    assert fs.du(path[0] + "/WalkFolder", False) == {
+        path[0] + "/WalkFolder/InnerFolder/testfile2.txt": 41,
+        path[0] + "/WalkFolder/testfile1.txt": 41,
+    }
+    assert fs.du(path[0] + "/WalkFolder", True) == 82
 
-@pytest.mark.skip("not implemented")
+
 def test_glob(localserver):
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
-    time.sleep(sleep_time)
-    print(fs.glob(path[0]+"/*.txt"))
-    assert 1 == 0
+    assert set(fs.glob(path[0] + "/*.txt")) == {
+        path[0] + "/testfile.txt",
+        path[0] + "/testfile2.txt",
+    }

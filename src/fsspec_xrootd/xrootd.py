@@ -35,8 +35,8 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         self.exp = storage_options.get("listings_expiry_time", 0)
         self.dircache = DirCache(use_listings_cache=True, listings_expiry_time=self.exp)
 
-    def invalidate_cache(self, path=None):
-        if path == None:
+    def invalidate_cache(self, path: str | None = None) -> None:
+        if path is None:
             self.dircache.clear()
         else:
             try:
@@ -61,7 +61,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         }
 
     @classmethod
-    def _strip_protocol(cls, path: str|list[str]) -> Any:
+    def _strip_protocol(cls, path: str | list[str]) -> Any:
         if type(path) == str:
             url = client.URL(path)
             return url.path
@@ -116,7 +116,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     def modified(self, path: str) -> Any:
         status, statInfo = self._myclient.stat(path, timeout=self.timeout)
-        return statInfo.modtimestr
+        return statInfo.modtime
 
     def sign(self, path: str, expiration: int = 100, **kwargs: Any) -> Any:
         return (
@@ -143,7 +143,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
     def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         spath = os.path.split(path)
         deet = self._ls_from_cache(spath[0])
-        if deet != None:
+        if deet is not None:
             det = []
             for item in deet:
                 if item["name"] == path:
@@ -175,16 +175,15 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                     "size": deet.size,
                     "type": "file",
                 }
-            _ = self.ls(spath[0], True, kwargs = {"force_update": True})
+            _ = self.ls(spath[0], True, kwargs={"force_update": True})
             return ret
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
         listing = []
-        if type(path) == list:
-            path = path[0]
         if path in self.dircache and not kwargs.get("force_update", False):
             if detail:
-                return self._ls_from_cache(path)
+                listing = self._ls_from_cache(path)
+                return listing
             else:
                 for item in self._ls_from_cache(path):
                     if item["name"][-1] == "/":
