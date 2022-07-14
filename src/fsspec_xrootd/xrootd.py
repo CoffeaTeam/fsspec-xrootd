@@ -33,7 +33,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         self.storage_options = storage_options
         self._intrans = False
         self.exp = storage_options.get("listings_expiry_time", 0)
-        self.dircache = DirCache(True, self.exp)
+        self.dircache = DirCache(use_listings_cache=True, listings_expiry_time=self.exp)
 
     def invalidate_cache(self, path=None):
         if path == None:
@@ -43,7 +43,6 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                 del self.dircache[path]
             except KeyError:
                 pass
-
 
     @staticmethod
     def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
@@ -145,11 +144,14 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         spath = os.path.split(path)
         deet = self._ls_from_cache(spath[0])
         if deet != None:
-            filter(lambda name: name["name"] == spath[1], deet)
+            det = []
+            for item in deet:
+                if item["name"] == path:
+                    det.append(item)
             return {
                 "name": path,
-                "size": deet[0]["size"],
-                "type": deet[0]["type"],
+                "size": det[0]["size"],
+                "type": det[0]["type"],
             }
         else:
             status, deet = self._myclient.stat(path, timeout=self.timeout)
@@ -173,24 +175,24 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                     "size": deet.size,
                     "type": "file",
                 }
-            self.dircache[spath[0]] = ret
+            _ = self.ls(spath[0], True, kwargs = {"force_update": True})
             return ret
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
         listing = []
         if type(path) == list:
             path = path[0]
-        try:
+        if path in self.dircache and not kwargs.get("force_update", False):
             if detail:
-                listing = self._ls_from_cache[path]
+                return self._ls_from_cache(path)
             else:
-                for item in self._ls_from_cache[path]:
+                for item in self._ls_from_cache(path):
                     if item["name"][-1] == "/":
                         item["name"] = item["name"][:-1]
                     spath = os.path.split(item["name"])
                     listing.append(spath[1])
-            return listing
-        except Exception:
+                return listing
+        else:
             status, deets = self._myclient.dirlist(
                 path, DirListFlags.STAT, timeout=self.timeout
             )

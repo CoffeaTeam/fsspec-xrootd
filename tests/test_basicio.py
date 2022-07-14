@@ -11,7 +11,7 @@ import pytest
 TESTDATA = "apple\nbanana\norange\ngrape"
 TESTWRITEDATA = "the end is never the end is never the end"
 sleep_time = 1
-expiry_time = .25
+expiry_time = .1
 
 
 @pytest.fixture(scope="module")
@@ -94,17 +94,19 @@ def test_append_fsspec(localserver):
 
 
 def test_mk_and_rm_dir_fsspec(localserver):
-    with fsspec.open(localserver + "/Folder/Test1/test1.txt", "wt") as f:
+    with fsspec.open(localserver + "/Folder/test1.txt", "wt") as f:
         f.write(TESTWRITEDATA)
         f.flush()
-    with fsspec.open(localserver + "/Folder/Test2/test2.txt", "wt") as f:
+    with fsspec.open(localserver + "/Folder/test2.txt", "wt") as f:
         f.write(TESTWRITEDATA)
         f.flush()
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
+    time.sleep(sleep_time)
+
     assert fs.ls(path[0], False) == ["testfile.txt", "testfile2.txt", "Folder"]
-    fs.mkdir(path[0] + "/Folder2/testfolder3")
+    fs.mkdir(path[0] + "/Folder2/Folder3")
     time.sleep(sleep_time)
     assert set(fs.ls(path[0], False)) == {
         "testfile.txt",
@@ -112,9 +114,8 @@ def test_mk_and_rm_dir_fsspec(localserver):
         "Folder2",
         "Folder",
     }
-
     with pytest.raises(OSError):
-        fs.mkdir(path[0] + "/Folder3/testfolder3", False)
+        fs.mkdir(path[0] + "/Folder4/Folder5", False)
 
     fs.mkdirs(path[0] + "/testfolder4")
     time.sleep(sleep_time)
@@ -146,23 +147,22 @@ def test_mk_and_rm_dir_fsspec(localserver):
     fs.mkdir(path[0] + "/Folder3", False)
     time.sleep(1)
 
-
+@pytest.mark.skip("not implemented")
 def test_touch_modified(localserver):
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
     t1 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b"appl"
-    time.sleep(2)
+    time.sleep(sleep_time)
     fs.touch(path[0] + "/testfile.txt", False)
     t2 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b"appl"
-    time.sleep(2)
+    time.sleep(sleep_time)
     fs.touch(path[0] + "/testfile.txt", True)
     t3 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b""
     assert t1 < t2 and t2 < t3
-
 
 
 def test_dir_cache(localserver):
@@ -183,6 +183,7 @@ def test_info(localserver):
     assert fs.info(path[0] + "/testfile.txt") in fs.ls(path[0], True)
 
 
+@pytest.mark.skip("not implemented")
 def test_sign(localserver):
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
