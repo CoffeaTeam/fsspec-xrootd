@@ -22,10 +22,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
     root_marker = "/"
 
     def __init__(self, *args: list[Any], **storage_options: Any) -> None:
-        try:
-            self.timeout = storage_options["timeout"]
-        except Exception:
-            self.timeout = 0
+        self.timeout = storage_options.get("timeout", 0)
         self._path = storage_options["path"]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
@@ -35,11 +32,18 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             raise OSError("Server ping took too long")
         self.storage_options = storage_options
         self._intrans = False
-        try:
-            exp = storage_options["listings_expiry_time"]
-        except Exception:
-            exp = None
-        self.dircache = DirCache(True, exp)
+        self.exp = storage_options.get("listings_expiry_time", 0)
+        self.dircache = DirCache(True, self.exp)
+
+    def invalidate_cache(self, path=None):
+        if path == None:
+            self.dircache.clear()
+        else:
+            try:
+                del self.dircache[path]
+            except KeyError:
+                pass
+
 
     @staticmethod
     def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
@@ -57,17 +61,18 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             "path_with_params": url.path_with_params,
         }
 
-    def invalidate_cache(self, path=None):
-        if path == None:
-            self.dircache.clear()
-        else:
-            self.dircache.__delitem__(path)
-
     @classmethod
-    def _strip_protocol(cls, path: str) -> Any:
-        url = client.URL(path)
-
-        return url.path
+    def _strip_protocol(cls, path: str|list[str]) -> Any:
+        if type(path) == str:
+            url = client.URL(path)
+            return url.path
+        elif type(path) == list:
+            paths = []
+            for item in path:
+                paths.append(client.URL(item).path)
+            return paths
+        else:
+            raise OSError("Strip protocol not given string or list")
 
     def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
         if create_parents:
@@ -102,7 +107,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         if not status.ok:
             raise OSError(f"File not removed properly: {status.message}")
 
-    def touch(self, path: str, truncate: bool = True, **kwargs: Any) -> None:
+    def touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
         if truncate or not self.exists(path):
             with self.open(path, "wb", timeout=self.timeout, **kwargs):
                 return
@@ -119,31 +124,34 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             self.storage_options["protocol"]
             + "://"
             + self.storage_options["hostid"]
-            + "//"
+            + "/"
             + self.storage_options["path_with_params"]
         )
 
     def exists(self, path: str, **kwargs: Any) -> bool | Any:
-        status, _ = self._myclient.stat(path, timeout=self.timeout)
-        if not status.ok:
-            if status.code == 400:
-                return False
-            else:
-                raise OSError(f"status check failed with message: {status.message}")
-        else:
+        if path in self.dircache:
             return True
+        else:
+            status, _ = self._myclient.stat(path, timeout=self.timeout)
+            if not status.ok:
+                if status.code == 400:
+                    return False
+                else:
+                    raise OSError(f"status check failed with message: {status.message}")
+            else:
+                return True
 
     def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         spath = os.path.split(path)
-        try:
-            deet = self._ls_from_cache[spath[0]]
+        deet = self._ls_from_cache(spath[0])
+        if deet != None:
             filter(lambda name: name["name"] == spath[1], deet)
             return {
                 "name": path,
                 "size": deet[0]["size"],
                 "type": deet[0]["type"],
             }
-        except Exception:
+        else:
             status, deet = self._myclient.stat(path, timeout=self.timeout)
             if not status.ok:
                 raise OSError(f"File stat request failed: {status.message}")
@@ -170,6 +178,8 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
         listing = []
+        if type(path) == list:
+            path = path[0]
         try:
             if detail:
                 listing = self._ls_from_cache[path]
