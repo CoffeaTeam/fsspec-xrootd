@@ -108,11 +108,15 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     def touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
         if truncate or not self.exists(path):
-            with self.open(path, "wb", timeout=self.timeout, **kwargs):
-                return
+            status, _ = self._myclient.truncate(path, 0, timeout=self.timeout)
+            if not status.ok:
+                raise OSError(f"File not touched properly: {status.message}")
         else:
-            with self.open(path, "a", timeout=self.timeout, **kwargs):
-                return
+            status, _ = self._myclient.truncate(
+                path, self.info(path).get("size"), timeout=self.timeout
+            )
+            if not status.ok:
+                raise OSError(f"File not touched properly: {status.message}")
 
     def modified(self, path: str) -> Any:
         status, statInfo = self._myclient.stat(path, timeout=self.timeout)

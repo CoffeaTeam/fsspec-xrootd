@@ -148,7 +148,6 @@ def test_mk_and_rm_dir_fsspec(localserver):
     time.sleep(1)
 
 
-@pytest.mark.skip("not implemented")
 def test_touch_modified(localserver):
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
@@ -163,9 +162,7 @@ def test_touch_modified(localserver):
     fs.touch(path[0] + "/testfile.txt", True)
     t3 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b""
-    assert (
-        t1 < t2 and t2 < t3
-    )  # for some reason, touching without truncation doesn't update the mod time!?
+    assert t1 < t2 and t2 < t3
 
 
 def test_dir_cache(localserver):
