@@ -8,17 +8,17 @@ import time
 import fsspec
 import pytest
 
-TESTDATA = "apple\nbanana\norange\ngrape"
-TESTWRITEDATA = "the end is never the end is never the end"
-sleep_time = 1
-expiry_time = 0.1
+TESTDATA1 = "apple\nbanana\norange\ngrape"
+TESTDATA2 = "red\ngreen\nyellow\nblue"
+sleep_time = .5
+expiry_time = .1
 
 
 @pytest.fixture(scope="module")
 def localserver(tmpdir_factory):
     srvdir = tmpdir_factory.mktemp("srv")
     with open(srvdir.join("testfile.txt"), "w") as fout:
-        fout.write(TESTDATA)
+        fout.write(TESTDATA1)
 
     xrdexe = shutil.which("xrootd")
     proc = subprocess.Popen([xrdexe, srvdir])
@@ -26,7 +26,6 @@ def localserver(tmpdir_factory):
     yield "root://localhost/" + str(srvdir)
     proc.terminate()
     proc.wait(timeout=10)
-
 
 @pytest.mark.skip("not implemented")
 def test_broken_server():
@@ -54,13 +53,13 @@ def test_read_xrd(localserver):
         status, res = f.read()
         if not status.ok:
             raise RuntimeError(status)
-        assert res.decode("ascii") == TESTDATA
+        assert res.decode("ascii") == TESTDATA1
         f.close()
 
 
 def test_read_fsspec(localserver):
     with fsspec.open(localserver + "/testfile.txt", "rt") as f:
-        assert f.read() == TESTDATA
+        assert f.read() == TESTDATA1
         f.seek(0)
         assert f.readline() == "apple\n"
         f.seek(0)
@@ -74,123 +73,143 @@ def test_read_fsspec(localserver):
 
     fs, token, path = fsspec.get_fs_token_paths(localserver + "/testfile.txt", "rt")
     assert fs.read_block(path[0], 0, 4) == b"appl"
+    fs.rm(path[0], True)
+    time.sleep(sleep_time)
 
 
 def test_write_fsspec(localserver):
-    time.sleep(sleep_time)
-    with fsspec.open(localserver + "/testfile2.txt", "wt") as f:
-        f.write(TESTWRITEDATA)
+    with fsspec.open(localserver + "/testfile.txt", "wt") as f:
+        f.write(TESTDATA1)
         f.flush()
-    with fsspec.open(localserver + "/testfile2.txt", "rt") as f:
-        assert f.read() == TESTWRITEDATA
+    time.sleep(sleep_time)
+    with fsspec.open(localserver + "/testfile.txt", "rt") as f:
+        assert f.read() == TESTDATA1
+    fs, token, path = fsspec.get_fs_token_paths(localserver + "/testfile.txt", "rt")
+    fs.rm(path[0], True)
+    time.sleep(sleep_time)
 
 
 def test_append_fsspec(localserver):
-    with fsspec.open(localserver + "/testfile2.txt", "at") as f:
-        f.write(TESTWRITEDATA)
+    with fsspec.open(localserver + "/testfile.txt", "wt") as f:
+        f.write(TESTDATA1)
         f.flush()
-    with fsspec.open(localserver + "/testfile2.txt", "rt") as f:
-        assert f.read() == TESTWRITEDATA + TESTWRITEDATA
+    time.sleep(sleep_time)
+    with fsspec.open(localserver + "/testfile.txt", "at") as f:
+        f.write(TESTDATA2)
+        f.flush()
+    time.sleep(sleep_time)
+    with fsspec.open(localserver + "/testfile.txt", "rt") as f:
+        assert f.read() == TESTDATA1 + TESTDATA2
+    fs, token, path = fsspec.get_fs_token_paths(localserver + "/testfile.txt", "rt")
+    fs.rm(path[0], True)
+    time.sleep(sleep_time)
 
 
 def test_mk_and_rm_dir_fsspec(localserver):
-    with fsspec.open(localserver + "/Folder/test1.txt", "wt") as f:
-        f.write(TESTWRITEDATA)
+    with fsspec.open(localserver + "/Folder1/testfile1.txt", "wt") as f:
+        f.write(TESTDATA2)
         f.flush()
-    with fsspec.open(localserver + "/Folder/test2.txt", "wt") as f:
-        f.write(TESTWRITEDATA)
+    with fsspec.open(localserver + "/Folder2/testfile2.txt", "wt") as f:
+        f.write(TESTDATA2)
         f.flush()
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
     time.sleep(sleep_time)
 
-    assert fs.ls(path[0], False) == ["testfile.txt", "testfile2.txt", "Folder"]
-    fs.mkdir(path[0] + "/Folder2/Folder3")
+    assert set(fs.ls(path[0], False)) == {"Folder1", "Folder2"}
+    fs.mkdir(path[0] + "/Folder3/Folder33")
     time.sleep(sleep_time)
     assert set(fs.ls(path[0], False)) == {
-        "testfile.txt",
-        "testfile2.txt",
+        "Folder1",
         "Folder2",
-        "Folder",
-    }
-    with pytest.raises(OSError):
-        fs.mkdir(path[0] + "/Folder4/Folder5", False)
-
-    fs.mkdirs(path[0] + "/testfolder4")
-    time.sleep(sleep_time)
-    assert set(fs.ls(path[0], False)) == {
-        "testfile.txt",
-        "testfile2.txt",
-        "Folder2",
-        "testfolder4",
-        "Folder",
-    }
-    fs.mkdirs(path[0] + "/testfolder4", True)
-
-    with pytest.raises(OSError):
-        fs.mkdirs(path[0] + "/testfolder4", False)
-
-    fs.rm(path[0] + "/Folder", True)
-    time.sleep(sleep_time)
-    assert set(fs.ls(path[0], False)) == {
-        "testfile.txt",
-        "testfile2.txt",
-        "Folder2",
-        "testfolder4",
+        "Folder3",
     }
 
     with pytest.raises(OSError):
-        fs.rm(path[0] + "/Folder2", False)
+        fs.mkdir(path[0] + "/Folder4/Folder44", False)
+
+    fs.mkdirs(path[0] + "/Folder4/Folder44")
+    time.sleep(sleep_time)
+    assert set(fs.ls(path[0], False)) == {
+        "Folder1",
+        "Folder2",
+        "Folder3",
+        "Folder4",
+    }
+    fs.mkdirs(path[0] + "/Folder4", True)
+    time.sleep(sleep_time)
     with pytest.raises(OSError):
-        fs.rmdir(path[0] + "/Folder2")
-    fs.mkdir(path[0] + "/Folder3", False)
-    time.sleep(1)
+        fs.mkdirs(path[0] + "/Folder4", False)
+
+    fs.rm(path[0] + "/Folder4", True)
+    time.sleep(sleep_time)
+    assert set(fs.ls(path[0], False)) == {
+        "Folder1",
+        "Folder2",
+        "Folder3",
+    }
+
+    with pytest.raises(OSError):
+        fs.rm(path[0] + "/Folder3", False)
+    with pytest.raises(OSError):
+        fs.rmdir(path[0] + "/Folder3")
+    fs.rm(path[0] + "/Folder1", True)
+    fs.rm(path[0] + "/Folder2", True)
+    fs.rm(path[0] + "/Folder3", True)
+    time.sleep(sleep_time)
 
 
 def test_touch_modified(localserver):
+    with fsspec.open(localserver + "/testfile.txt", "wt") as f:
+        f.write(TESTDATA1)
+        f.flush()
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
     t1 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b"appl"
-    time.sleep(sleep_time)
+    time.sleep(1)
     fs.touch(path[0] + "/testfile.txt", False)
     t2 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b"appl"
-    time.sleep(sleep_time)
+    time.sleep(1)
     fs.touch(path[0] + "/testfile.txt", True)
     t3 = fs.modified(path[0] + "/testfile.txt")
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b""
     assert t1 < t2 and t2 < t3
+    fs.rm(path[0] + "/testfile.txt", True)
+    time.sleep(sleep_time)
 
 
 def test_dir_cache(localserver):
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
+    fs.mkdir(path[0] + "/Folder1")
+    fs.mkdir(path[0] + "/Folder2")
+    time.sleep(sleep_time)
     dirs = fs.ls(path[0], True)
     dirs_cached = fs._ls_from_cache(path[0])
     assert dirs == dirs_cached
+    fs.rm(path[0] + "/Folder1")
+    fs.rm(path[0] + "/Folder2")
+    time.sleep(sleep_time)
 
 
 def test_info(localserver):
+    with fsspec.open(localserver + "/testfile.txt", "wt") as f:
+        f.write(TESTDATA1)
+        f.flush()
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
     time.sleep(sleep_time)
     assert fs.info(path[0] + "/testfile.txt") in fs.ls(path[0], True)
+    _ = fs.ls(path[0], True)
     assert fs.info(path[0] + "/testfile.txt") in fs.ls(path[0], True)
-
-
-@pytest.mark.skip("not implemented")
-def test_sign(localserver):
-    fs, token, path = fsspec.get_fs_token_paths(
-        localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
-    )
-    print(fs.sign(path[0]))
-    print(localserver)
-    assert fs.sign(path[0]) == localserver  # why do these disagree?
+    fs.rm(path[0] + "/testfile.txt")
+    time.sleep(sleep_time)
 
 
 def test_walk_find(localserver):
@@ -198,10 +217,10 @@ def test_walk_find(localserver):
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
     with fsspec.open(localserver + "/WalkFolder/testfile1.txt", "wt") as f:
-        f.write(TESTWRITEDATA)
+        f.write(TESTDATA2)
         f.flush()
     with fsspec.open(localserver + "/WalkFolder/InnerFolder/testfile2.txt", "wt") as f:
-        f.write(TESTWRITEDATA)
+        f.write(TESTDATA2)
         f.flush()
     out = fs.walk(path[0] + "/WalkFolder")
     listing = []
@@ -220,24 +239,44 @@ def test_walk_find(localserver):
         path[0] + "/WalkFolder/InnerFolder/testfile2.txt",
         path[0] + "/WalkFolder/testfile1.txt",
     }
+    fs.rm(path[0] + "/WalkFolder", True)
+    time.sleep(sleep_time)
 
 
 def test_du(localserver):
+    with fsspec.open(localserver + "/WalkFolder/testfile1.txt", "wt") as f:
+        f.write(TESTDATA2)
+        f.flush()
+    with fsspec.open(localserver + "/WalkFolder/InnerFolder/testfile2.txt", "wt") as f:
+        f.write(TESTDATA2)
+        f.flush()
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
     assert fs.du(path[0] + "/WalkFolder", False) == {
-        path[0] + "/WalkFolder/InnerFolder/testfile2.txt": 41,
-        path[0] + "/WalkFolder/testfile1.txt": 41,
+        path[0] + "/WalkFolder/InnerFolder/testfile2.txt": 21,
+        path[0] + "/WalkFolder/testfile1.txt": 21,
     }
-    assert fs.du(path[0] + "/WalkFolder", True) == 82
+    assert fs.du(path[0] + "/WalkFolder", True) == 42
+    fs.rm(path[0] + "/WalkFolder", True)
+    time.sleep(sleep_time)
 
 
 def test_glob(localserver):
+    with fsspec.open(localserver + "/WalkFolder/testfile1.txt", "wt") as f:
+        f.write(TESTDATA2)
+        f.flush()
+    with fsspec.open(localserver + "/WalkFolder/testfile2.txt", "wt") as f:
+        f.write(TESTDATA2)
+        f.flush()
+    time.sleep(sleep_time)
     fs, token, path = fsspec.get_fs_token_paths(
         localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
-    assert set(fs.glob(path[0] + "/*.txt")) == {
-        path[0] + "/testfile.txt",
-        path[0] + "/testfile2.txt",
+    print(fs.glob(path[0] + "/*.txt"))
+    assert set(fs.glob(path[0] + "/WalkFolder/*.txt")) == {
+        path[0] + "/WalkFolder/testfile1.txt",
+        path[0] + "/WalkFolder/testfile2.txt",
     }
+    fs.rm(path[0] + "/WalkFolder", True)
+    time.sleep(sleep_time)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import os.path
 import warnings
+from enum import IntEnum
 from typing import Any
 
 from fsspec.dircache import DirCache  # type: ignore[import]
@@ -16,24 +17,31 @@ from XRootD.client.flags import (  # type: ignore[import]
 )
 
 
+class ErrorCodes(IntEnum):
+    INVALID_PATH = 400
+
+
 class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     protocol = "root"
     root_marker = "/"
+    default_timeout = 0
 
     def __init__(self, *args: list[Any], **storage_options: Any) -> None:
-        self.timeout = storage_options.get("timeout", 0)
+        self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self._path = storage_options["path"]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
         )
         status, _n = self._myclient.ping(self.timeout)
         if not status.ok:
-            raise OSError("Server ping took too long")
-        self.storage_options = storage_options
+            raise OSError(f"Could not connect to server {storage_options['hostid']}")
         self._intrans = False
-        self.exp = storage_options.get("listings_expiry_time", 0)
-        self.dircache = DirCache(use_listings_cache=True, listings_expiry_time=self.exp)
+        self.dircache = DirCache(
+            use_listings_cache=True,
+            listings_expiry_time=storage_options.get("listings_expiry_time", 0),
+        )
+        self.storage_options = storage_options
 
     def invalidate_cache(self, path: str | None = None) -> None:
         if path is None:
@@ -63,15 +71,11 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
     @classmethod
     def _strip_protocol(cls, path: str | list[str]) -> Any:
         if type(path) == str:
-            url = client.URL(path)
-            return url.path
+            return client.URL(path).path
         elif type(path) == list:
-            paths = []
-            for item in path:
-                paths.append(client.URL(item).path)
-            return paths
+            return [client.URL(item).path for item in path]
         else:
-            raise OSError("Strip protocol not given string or list")
+            raise ValueError("Strip protocol not given string or list")
 
     def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
         if create_parents:
@@ -122,41 +126,29 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         status, statInfo = self._myclient.stat(path, timeout=self.timeout)
         return statInfo.modtime
 
-    def sign(self, path: str, expiration: int = 100, **kwargs: Any) -> Any:
-        return (
-            self.storage_options["protocol"]
-            + "://"
-            + self.storage_options["hostid"]
-            + "/"
-            + self.storage_options["path_with_params"]
-        )
-
-    def exists(self, path: str, **kwargs: Any) -> bool | Any:
+    def exists(self, path: str, **kwargs: Any) -> bool:
         if path in self.dircache:
             return True
         else:
             status, _ = self._myclient.stat(path, timeout=self.timeout)
-            if not status.ok:
-                if status.code == 400:
-                    return False
-                else:
-                    raise OSError(f"status check failed with message: {status.message}")
-            else:
-                return True
+            if status.code == ErrorCodes.INVALID_PATH:
+                return False
+            elif not status.ok:
+                raise OSError(f"status check failed with message: {status.message}")
+            return True
 
     def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         spath = os.path.split(path)
         deet = self._ls_from_cache(spath[0])
         if deet is not None:
-            det = []
             for item in deet:
                 if item["name"] == path:
-                    det.append(item)
-            return {
-                "name": path,
-                "size": det[0]["size"],
-                "type": det[0]["type"],
-            }
+                    return {
+                        "name": path,
+                        "size": item["size"],
+                        "type": item["type"],
+                    }
+            raise OSError("_ls_from_cache() failed to function")
         else:
             status, deet = self._myclient.stat(path, timeout=self.timeout)
             if not status.ok:
@@ -179,7 +171,6 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                     "size": deet.size,
                     "type": "file",
                 }
-            _ = self.ls(spath[0], True, kwargs={"force_update": True})
             return ret
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
@@ -189,12 +180,9 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                 listing = self._ls_from_cache(path)
                 return listing
             else:
-                for item in self._ls_from_cache(path):
-                    if item["name"][-1] == "/":
-                        item["name"] = item["name"][:-1]
-                    spath = os.path.split(item["name"])
-                    listing.append(spath[1])
-                return listing
+                return [
+                    os.path.basename(item["name"]) for item in self._ls_from_cache(path)
+                ]
         else:
             status, deets = self._myclient.dirlist(
                 path, DirListFlags.STAT, timeout=self.timeout
@@ -232,13 +220,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             if detail:
                 return listing
             else:
-                miniListing = []
-                for item in listing:
-                    if item["name"][-1] == "/":
-                        item["name"] = item["name"][:-1]
-                    spath = os.path.split(item["name"])
-                    miniListing.append(spath[1])
-                return miniListing
+                return [os.path.basename(item["name"].rstrip("/")) for item in listing]
 
     def _open(
         self,
