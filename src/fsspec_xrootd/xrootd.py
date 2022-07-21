@@ -25,7 +25,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     protocol = "root"
     root_marker = "/"
-    default_timeout = 0
+    default_timeout = 60
 
     def __init__(self, *args: list[Any], **storage_options: Any) -> None:
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
@@ -33,7 +33,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
         )
-        status, _n = self._myclient.ping(self.timeout)
+        status, _n = self._myclient.ping(15)
         if not status.ok:
             raise OSError(f"Could not connect to server {storage_options['hostid']}")
         self._intrans = False
@@ -88,17 +88,14 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
             raise OSError(f"Directory not made properly: {status.message}")
 
     def makedirs(self, path: str, exist_ok: bool = False) -> None:
-        exist = self.exists(path)
-        if exist and exist_ok:
-            return
-        elif exist and not exist_ok:
-            raise OSError("Location already exists and exist_ok arg was set to false")
-        else:
-            status, n = self._myclient.mkdir(
-                path, MkDirFlags.MAKEPATH, timeout=self.timeout
-            )
-            if not status.ok:
-                raise OSError(f"Directory not made properly: {status.message}")
+        if not exist_ok:
+            if self.exists(path):
+                raise OSError("Location already exists and exist_ok arg was set to false")
+        status, n = self._myclient.mkdir(
+            path, MkDirFlags.MAKEPATH, timeout=self.timeout
+        )
+        if not status.ok and not (status.code == ErrorCodes.INVALID_PATH and exist_ok):
+            raise OSError(f"Directory not made properly: {status.message}")
 
     def rmdir(self, path: str) -> None:
         status, n = self._myclient.rmdir(path, timeout=self.timeout)

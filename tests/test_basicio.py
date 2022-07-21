@@ -10,7 +10,7 @@ import pytest
 
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
-sleep_time = 0.5
+sleep_time = 0.2
 expiry_time = 0.1
 
 
@@ -28,7 +28,7 @@ def localserver(tmpdir_factory):
     proc.wait(timeout=10)
 
 
-@pytest.mark.skip("not implemented")
+
 def test_broken_server():
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
@@ -75,38 +75,33 @@ def test_read_fsspec(localserver):
     fs, token, path = fsspec.get_fs_token_paths(localserver + "/testfile.txt", "rt")
     assert fs.read_block(path[0], 0, 4) == b"appl"
     fs.rm(path[0], True)
-    time.sleep(sleep_time)
 
 
 def test_write_fsspec(localserver):
     with fsspec.open(localserver + "/testfile.txt", "wt") as f:
         f.write(TESTDATA1)
         f.flush()
-    time.sleep(sleep_time)
     with fsspec.open(localserver + "/testfile.txt", "rt") as f:
         assert f.read() == TESTDATA1
     fs, token, path = fsspec.get_fs_token_paths(localserver + "/testfile.txt", "rt")
     fs.rm(path[0], True)
-    time.sleep(sleep_time)
 
 
 def test_append_fsspec(localserver):
     with fsspec.open(localserver + "/testfile.txt", "wt") as f:
         f.write(TESTDATA1)
         f.flush()
-    time.sleep(sleep_time)
     with fsspec.open(localserver + "/testfile.txt", "at") as f:
         f.write(TESTDATA2)
         f.flush()
-    time.sleep(sleep_time)
     with fsspec.open(localserver + "/testfile.txt", "rt") as f:
         assert f.read() == TESTDATA1 + TESTDATA2
     fs, token, path = fsspec.get_fs_token_paths(localserver + "/testfile.txt", "rt")
     fs.rm(path[0], True)
-    time.sleep(sleep_time)
 
 
-def test_mk_and_rm_dir_fsspec(localserver):
+@pytest.mark.parametrize("cache_expiry", [0, expiry_time])
+def test_mk_and_rm_dir_fsspec(localserver, cache_expiry):
     with fsspec.open(localserver + "/Folder1/testfile1.txt", "wt") as f:
         f.write(TESTDATA2)
         f.flush()
@@ -114,7 +109,7 @@ def test_mk_and_rm_dir_fsspec(localserver):
         f.write(TESTDATA2)
         f.flush()
     fs, token, path = fsspec.get_fs_token_paths(
-        localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
+        localserver, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
     time.sleep(sleep_time)
 
@@ -158,10 +153,10 @@ def test_mk_and_rm_dir_fsspec(localserver):
     fs.rm(path[0] + "/Folder1", True)
     fs.rm(path[0] + "/Folder2", True)
     fs.rm(path[0] + "/Folder3", True)
-    time.sleep(sleep_time)
 
 
 def test_touch_modified(localserver):
+    time.sleep(sleep_time)
     with fsspec.open(localserver + "/testfile.txt", "wt") as f:
         f.write(TESTDATA1)
         f.flush()
@@ -180,7 +175,6 @@ def test_touch_modified(localserver):
     assert fs.read_block(path[0] + "/testfile.txt", 0, 4) == b""
     assert t1 < t2 and t2 < t3
     fs.rm(path[0] + "/testfile.txt", True)
-    time.sleep(sleep_time)
 
 
 def test_dir_cache(localserver):
@@ -195,27 +189,27 @@ def test_dir_cache(localserver):
     assert dirs == dirs_cached
     fs.rm(path[0] + "/Folder1")
     fs.rm(path[0] + "/Folder2")
-    time.sleep(sleep_time)
 
 
-def test_info(localserver):
+@pytest.mark.parametrize("cache_expiry", [0, expiry_time])
+def test_info(localserver, cache_expiry):
     with fsspec.open(localserver + "/testfile.txt", "wt") as f:
         f.write(TESTDATA1)
         f.flush()
     fs, token, path = fsspec.get_fs_token_paths(
-        localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
+        localserver, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
     time.sleep(sleep_time)
     assert fs.info(path[0] + "/testfile.txt") in fs.ls(path[0], True)
     _ = fs.ls(path[0], True)
     assert fs.info(path[0] + "/testfile.txt") in fs.ls(path[0], True)
     fs.rm(path[0] + "/testfile.txt")
-    time.sleep(sleep_time)
 
 
-def test_walk_find(localserver):
+@pytest.mark.parametrize("cache_expiry", [0, expiry_time])
+def test_walk_find(localserver, cache_expiry):
     fs, token, path = fsspec.get_fs_token_paths(
-        localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
+        localserver, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
     with fsspec.open(localserver + "/WalkFolder/testfile1.txt", "wt") as f:
         f.write(TESTDATA2)
@@ -241,10 +235,10 @@ def test_walk_find(localserver):
         path[0] + "/WalkFolder/testfile1.txt",
     }
     fs.rm(path[0] + "/WalkFolder", True)
-    time.sleep(sleep_time)
 
 
-def test_du(localserver):
+@pytest.mark.parametrize("cache_expiry", [0, expiry_time])
+def test_du(localserver, cache_expiry):
     with fsspec.open(localserver + "/WalkFolder/testfile1.txt", "wt") as f:
         f.write(TESTDATA2)
         f.flush()
@@ -252,7 +246,7 @@ def test_du(localserver):
         f.write(TESTDATA2)
         f.flush()
     fs, token, path = fsspec.get_fs_token_paths(
-        localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
+        localserver, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
     assert fs.du(path[0] + "/WalkFolder", False) == {
         path[0] + "/WalkFolder/InnerFolder/testfile2.txt": 21,
@@ -260,10 +254,10 @@ def test_du(localserver):
     }
     assert fs.du(path[0] + "/WalkFolder", True) == 42
     fs.rm(path[0] + "/WalkFolder", True)
-    time.sleep(sleep_time)
 
 
-def test_glob(localserver):
+@pytest.mark.parametrize("cache_expiry", [0, expiry_time])
+def test_glob(localserver, cache_expiry):
     with fsspec.open(localserver + "/WalkFolder/testfile1.txt", "wt") as f:
         f.write(TESTDATA2)
         f.flush()
@@ -272,7 +266,7 @@ def test_glob(localserver):
         f.flush()
     time.sleep(sleep_time)
     fs, token, path = fsspec.get_fs_token_paths(
-        localserver, "rt", storage_options={"listings_expiry_time": expiry_time}
+        localserver, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
     print(fs.glob(path[0] + "/*.txt"))
     assert set(fs.glob(path[0] + "/WalkFolder/*.txt")) == {
@@ -280,4 +274,3 @@ def test_glob(localserver):
         path[0] + "/WalkFolder/testfile2.txt",
     }
     fs.rm(path[0] + "/WalkFolder", True)
-    time.sleep(sleep_time)
