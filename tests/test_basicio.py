@@ -10,8 +10,8 @@ import pytest
 
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
-sleep_time = .5
-expiry_time = .1
+sleep_time = 0.5
+expiry_time = 0.1
 
 
 @pytest.fixture(scope="module")
@@ -26,6 +26,7 @@ def localserver(tmpdir_factory):
     yield "root://localhost/" + str(srvdir)
     proc.terminate()
     proc.wait(timeout=10)
+
 
 @pytest.mark.skip("not implemented")
 def test_broken_server():
