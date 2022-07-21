@@ -28,7 +28,6 @@ def localserver(tmpdir_factory):
     proc.wait(timeout=10)
 
 
-
 def test_broken_server():
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail

@@ -90,7 +90,9 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
     def makedirs(self, path: str, exist_ok: bool = False) -> None:
         if not exist_ok:
             if self.exists(path):
-                raise OSError("Location already exists and exist_ok arg was set to false")
+                raise OSError(
+                    "Location already exists and exist_ok arg was set to false"
+                )
         status, n = self._myclient.mkdir(
             path, MkDirFlags.MAKEPATH, timeout=self.timeout
         )
