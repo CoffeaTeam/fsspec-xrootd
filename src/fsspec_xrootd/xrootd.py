@@ -1,30 +1,56 @@
 from __future__ import annotations
 
 import io
+import os.path
 import warnings
+from enum import IntEnum
 from typing import Any
 
+from fsspec.dircache import DirCache  # type: ignore[import]
 from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
 from XRootD import client  # type: ignore[import]
 from XRootD.client.flags import (  # type: ignore[import]
     DirListFlags,
+    MkDirFlags,
     OpenFlags,
     StatInfoFlags,
 )
+
+
+class ErrorCodes(IntEnum):
+    INVALID_PATH = 400
 
 
 class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     protocol = "root"
     root_marker = "/"
+    default_timeout = 60
 
-    def __init__(self, *args: list[Any], **storage_options: str) -> None:
+    def __init__(self, *args: list[Any], **storage_options: Any) -> None:
+        self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self._path = storage_options["path"]
         self._myclient = client.FileSystem(
             storage_options["protocol"] + "://" + storage_options["hostid"]
         )
-        self.storage_options = storage_options
+        status, _n = self._myclient.ping(15)
+        if not status.ok:
+            raise OSError(f"Could not connect to server {storage_options['hostid']}")
         self._intrans = False
+        self.dircache = DirCache(
+            use_listings_cache=True,
+            listings_expiry_time=storage_options.get("listings_expiry_time", 0),
+        )
+        self.storage_options = storage_options
+
+    def invalidate_cache(self, path: str | None = None) -> None:
+        if path is None:
+            self.dircache.clear()
+        else:
+            try:
+                del self.dircache[path]
+            except KeyError:
+                pass
 
     @staticmethod
     def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
@@ -43,39 +69,157 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         }
 
     @classmethod
-    def _strip_protocol(cls, path: str) -> Any:
-        url = client.URL(path)
+    def _strip_protocol(cls, path: str | list[str]) -> Any:
+        if type(path) == str:
+            return client.URL(path).path
+        elif type(path) == list:
+            return [client.URL(item).path for item in path]
+        else:
+            raise ValueError("Strip protocol not given string or list")
 
-        return url.path
+    def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
+        if create_parents:
+            status, n = self._myclient.mkdir(
+                path, MkDirFlags.MAKEPATH, timeout=self.timeout
+            )
+        else:
+            status, n = self._myclient.mkdir(path, timeout=self.timeout)
+        if not status.ok:
+            raise OSError(f"Directory not made properly: {status.message}")
+
+    def makedirs(self, path: str, exist_ok: bool = False) -> None:
+        if not exist_ok:
+            if self.exists(path):
+                raise OSError(
+                    "Location already exists and exist_ok arg was set to false"
+                )
+        status, n = self._myclient.mkdir(
+            path, MkDirFlags.MAKEPATH, timeout=self.timeout
+        )
+        if not status.ok and not (status.code == ErrorCodes.INVALID_PATH and exist_ok):
+            raise OSError(f"Directory not made properly: {status.message}")
+
+    def rmdir(self, path: str) -> None:
+        status, n = self._myclient.rmdir(path, timeout=self.timeout)
+        if not status.ok:
+            raise OSError(f"Directory not removed properly: {status.message}")
+
+    def _rm(self, path: str) -> None:
+        status, n = self._myclient.rm(path, timeout=self.timeout)
+        if not status.ok:
+            raise OSError(f"File not removed properly: {status.message}")
+
+    def touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
+        if truncate or not self.exists(path):
+            status, _ = self._myclient.truncate(path, 0, timeout=self.timeout)
+            if not status.ok:
+                raise OSError(f"File not touched properly: {status.message}")
+        else:
+            status, _ = self._myclient.truncate(
+                path, self.info(path).get("size"), timeout=self.timeout
+            )
+            if not status.ok:
+                raise OSError(f"File not touched properly: {status.message}")
+
+    def modified(self, path: str) -> Any:
+        status, statInfo = self._myclient.stat(path, timeout=self.timeout)
+        return statInfo.modtime
+
+    def exists(self, path: str, **kwargs: Any) -> bool:
+        if path in self.dircache:
+            return True
+        else:
+            status, _ = self._myclient.stat(path, timeout=self.timeout)
+            if status.code == ErrorCodes.INVALID_PATH:
+                return False
+            elif not status.ok:
+                raise OSError(f"status check failed with message: {status.message}")
+            return True
+
+    def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        spath = os.path.split(path)
+        deet = self._ls_from_cache(spath[0])
+        if deet is not None:
+            for item in deet:
+                if item["name"] == path:
+                    return {
+                        "name": path,
+                        "size": item["size"],
+                        "type": item["type"],
+                    }
+            raise OSError("_ls_from_cache() failed to function")
+        else:
+            status, deet = self._myclient.stat(path, timeout=self.timeout)
+            if not status.ok:
+                raise OSError(f"File stat request failed: {status.message}")
+            if deet.flags & StatInfoFlags.IS_DIR:
+                ret = {
+                    "name": path,
+                    "size": deet.size,
+                    "type": "directory",
+                }
+            elif deet.flags & StatInfoFlags.OTHER:
+                ret = {
+                    "name": path,
+                    "size": deet.size,
+                    "type": "other",
+                }
+            else:
+                ret = {
+                    "name": path,
+                    "size": deet.size,
+                    "type": "file",
+                }
+            return ret
 
     def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
-
-        stats, deets = self._myclient.dirlist(path, DirListFlags.STAT)
-
         listing = []
-
-        if detail:
-            for item in deets:
-                t = ""
-                if item.statinfo.flags and StatInfoFlags.IS_DIR:
-                    t = "directory"
-                elif item.statinfo.flags and StatInfoFlags.OTHER:
-                    t = "other"
-                else:
-                    t = "file"
-
-                listing.append(
-                    {
-                        "name": path + "/" + item.name,
-                        "size": item.statinfo.size,
-                        "type": t,
-                    }
-                )
+        if path in self.dircache and not kwargs.get("force_update", False):
+            if detail:
+                listing = self._ls_from_cache(path)
+                return listing
+            else:
+                return [
+                    os.path.basename(item["name"]) for item in self._ls_from_cache(path)
+                ]
         else:
+            status, deets = self._myclient.dirlist(
+                path, DirListFlags.STAT, timeout=self.timeout
+            )
+            if not status.ok:
+                raise OSError(
+                    f"Server failed to provide directory info: {status.message}"
+                )
             for item in deets:
-                listing.append(item.name)
-
-        return listing
+                if item.statinfo.flags & StatInfoFlags.IS_DIR:
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "directory",
+                        }
+                    )
+                elif item.statinfo.flags & StatInfoFlags.OTHER:
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "other",
+                        }
+                    )
+                else:
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "file",
+                        }
+                    )
+            self.dircache[path] = listing
+            if detail:
+                return listing
+            else:
+                return [os.path.basename(item["name"].rstrip("/")) for item in listing]
 
     def _open(
         self,
@@ -166,12 +310,12 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
     ) -> None:
         from fsspec.core import caches
 
+        self.timeout = fs.timeout
         # by this point, mode will have a "b" in it
+        # update "+" mode removed for now since seek() is read only
         if "x" in mode:
             self.mode = OpenFlags.NEW
         elif "a" in mode:
-            self.mode = OpenFlags.UPDATE
-        elif "+" in mode:
             self.mode = OpenFlags.UPDATE
         elif "w" in mode:
             self.mode = OpenFlags.DELETE
@@ -187,6 +331,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             + "/"
             + path,
             self.mode,
+            timeout=self.timeout,
         )
 
         if not status.ok:
@@ -194,7 +339,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         self.metaOffset = 0
         if "a" in mode:
-            _stats, _deets = self._myFile.stat()
+            _stats, _deets = self._myFile.stat(timeout=self.timeout)
             self.metaOffset = _deets.size
 
         self.path = path
@@ -241,7 +386,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
     def _fetch_range(self, start: int, end: int) -> Any:
         status, data = self._myFile.read(
-            self.metaOffset + start, self.metaOffset + end - start
+            self.metaOffset + start, self.metaOffset + end - start, timeout=self.timeout
         )
         if not status.ok:
             raise OSError(f"File did not read properly: {status.message}")
@@ -269,7 +414,10 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
     def _upload_chunk(self, final: bool = False) -> Any:
         status, _n = self._myFile.write(
-            self.buffer.getvalue(), self.offset + self.metaOffset, self.buffer.tell()
+            self.buffer.getvalue(),
+            self.offset + self.metaOffset,
+            self.buffer.tell(),
+            timeout=self.timeout,
         )
         if final:
             self.closed
@@ -292,7 +440,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             if self.fs is not None:
                 self.fs.invalidate_cache(self.path)
                 self.fs.invalidate_cache(self.fs._parent(self.path))
-        status, _n = self._myFile.close()
+        status, _n = self._myFile.close(timeout=self.timeout)
         if not status.ok:
             raise OSError(f"File did not close properly: {status.message}")
         self.closed = True
