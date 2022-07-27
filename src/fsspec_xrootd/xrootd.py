@@ -29,9 +29,8 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
     def __init__(self, *args: list[Any], **storage_options: Any) -> None:
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
-        self._path = storage_options["path"]
         self._myclient = client.FileSystem(
-            storage_options["protocol"] + "://" + storage_options["hostid"]
+            XRootDFileSystem.protocol + "://" + storage_options["hostid"]
         )
         status, _n = self._myclient.ping(15)
         if not status.ok:
@@ -323,13 +322,13 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.mode = OpenFlags.READ
         else:
             raise NotImplementedError
+
+        if not isinstance(path, str):
+            raise ValueError(f"Path expected to be string, path: {path}")
+
         self._myFile = client.File()
         status, _n = self._myFile.open(
-            fs.storage_options["protocol"]
-            + "://"
-            + fs.storage_options["hostid"]
-            + "/"
-            + path,
+            str(fs.protocol) + "://" + fs.storage_options["hostid"] + "/" + path,
             self.mode,
             timeout=self.timeout,
         )
