@@ -23,10 +23,7 @@ def localserver(tmpdir_factory):
     xrdexe = shutil.which("xrootd")
     proc = subprocess.Popen([xrdexe, srvdir])
     time.sleep(2)  # give it some startup
-    url = "root://localhost/" + str(srvdir)
-    yield url
-    fs, token, path = fsspec.get_fs_token_paths(url, "rt")
-    fs.rm(path[0])
+    yield "root://localhost/" + str(srvdir)
     proc.terminate()
     proc.wait(timeout=10)
 
