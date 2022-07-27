@@ -328,7 +328,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         self._myFile = client.File()
         status, _n = self._myFile.open(
-            str(fs.protocol) + "://" + fs.storage_options["hostid"] + "/" + path,
+            fs.protocol + "://" + fs.storage_options["hostid"] + "/" + path,
             self.mode,
             timeout=self.timeout,
         )
