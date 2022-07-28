@@ -1,11 +1,10 @@
 """Test basic IO against a xrootd server fixture"""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import time
-import os
-import shutil
 
 import fsspec
 import pytest
@@ -14,6 +13,7 @@ TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
 sleep_time = 0.2
 expiry_time = 0.1
+
 
 @pytest.fixture(scope="module")
 def localserver(tmpdir_factory):
@@ -97,7 +97,7 @@ def test_write_fsspec(localserver, clear_server):
     with fsspec.open(remoteurl + "/testfile.txt", "wt") as f:
         f.write(TESTDATA1)
         f.flush()
-    with open(localpath + "/testfile.txt", "rt") as f:
+    with open(localpath + "/testfile.txt") as f:
         assert f.read() == TESTDATA1
 
 
@@ -109,7 +109,7 @@ def test_append_fsspec(localserver, clear_server):
     with fsspec.open(remoteurl + "/testfile.txt", "at") as f:
         f.write(TESTDATA2)
         f.flush()
-    with open(localpath + "/testfile.txt", "rt") as f:
+    with open(localpath + "/testfile.txt") as f:
         assert f.read() == TESTDATA1 + TESTDATA2
 
 
