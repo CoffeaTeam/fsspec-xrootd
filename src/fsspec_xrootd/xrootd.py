@@ -58,7 +58,6 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
 
         return {
             "hostid": url.hostid,
-            "protocol": url.protocol,
             "username": url.username,
             "password": url.password,
             "hostname": url.hostname,
