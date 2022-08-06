@@ -6,15 +6,14 @@ import os.path
 import warnings
 from enum import IntEnum
 from functools import partial
-from typing import Any
+from typing import Any, Callable
 
 from fsspec.asyn import (  # type: ignore[import]
-    AbstractAsyncStreamedFile,
     AsyncFileSystem,
-    get_loop,
+    _run_coros_in_chunks,
+    sync_wrapper,
 )
-from fsspec.dircache import DirCache  # type: ignore[import]
-from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
+from fsspec.spec import AbstractBufferedFile  # type: ignore[import]
 from XRootD import client  # type: ignore[import]
 from XRootD.client.flags import (  # type: ignore[import]
     DirListFlags,
@@ -29,20 +28,21 @@ class ErrorCodes(IntEnum):
     INVALID_PATH = 400
 
 
-# what is the type of a future?
-def _handle(future: Any, status: XRootDStatus, content: Any, servers: HostList) -> None:
+def _handle(
+    future: asyncio.Future[tuple[Any, Any]],
+    status: XRootDStatus,
+    content: Any,
+    servers: HostList,
+) -> None:
     if future.cancelled():
         return
     try:
-        if not status.ok:
-            raise OSError(status.message.strip())
         future.get_loop().call_soon_threadsafe(future.set_result, (status, content))
     except Exception as exc:
         future.get_loop().call_soon_threadsafe(future.set_exception, exc)
 
 
-# better tuple type?
-async def _async_wrap(func: client.FileSystem | client.File, args: Any) -> Any:
+async def _async_wrap(func: Callable[..., Any], *args: Any) -> Any:
     future = asyncio.get_running_loop().create_future()
     status = func(*args, callback=partial(_handle, future))
     if not status.ok:
@@ -109,6 +109,96 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         else:
             raise ValueError("Strip protocol not given string or list")
 
+    async def _mkdir(
+        self, path: str, create_parents: bool = True, **kwargs: Any
+    ) -> None:
+        if create_parents:
+            status, n = await _async_wrap(
+                self._myclient.mkdir, path, MkDirFlags.MAKEPATH, self.timeout
+            )
+        else:
+            status, n = await _async_wrap(self._myclient.mkdir, path, self.timeout)
+        if not status.ok:
+            raise OSError(f"Directory not made properly: {status.message}")
+
+    async def _makedirs(self, path: str, exist_ok: bool = False) -> None:
+        if not exist_ok:
+            if await self._exists(path):
+                raise OSError(
+                    "Location already exists and exist_ok arg was set to false"
+                )
+        status, n = await _async_wrap(
+            self._myclient.mkdir, path, MkDirFlags.MAKEPATH, self.timeout
+        )
+        if not status.ok and not (status.code == ErrorCodes.INVALID_PATH and exist_ok):
+            raise OSError(f"Directory not made properly: {status.message}")
+
+    async def _rm(
+        self,
+        path: str,
+        recursive: bool = False,
+        batch_size: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        # TODO: implement on_error
+        batch_size = batch_size or self.batch_size
+        path = await self._expand_path(path, recursive=recursive)
+        return await _run_coros_in_chunks(
+            [self._rm_file(p, **kwargs) for p in reversed(path)],
+            batch_size=batch_size,
+            nofiles=True,
+        )
+
+    async def _rmdir(self, path: str) -> None:
+        status, n = await _async_wrap(self._myclient.rmdir, path, self.timeout)
+        print(status.ok)
+        if not status.ok:
+            raise OSError(f"Directory not removed properly: {status.message}")
+
+    rmdir = sync_wrapper(_rmdir)
+
+    async def _rm_file(self, path: str) -> None:
+        status, n = await _async_wrap(self._myclient.rm, path, self.timeout)
+        if not status.ok:
+            raise OSError(f"File not removed properly: {status.message}")
+
+    async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
+        if truncate or not await self._exists(path):
+            status, _ = await _async_wrap(
+                self._myclient.truncate, path, 0, self.timeout
+            )
+            if not status.ok:
+                raise OSError(f"File not touched properly: {status.message}")
+        else:
+            len = await self._info(path)
+            status, _ = await _async_wrap(
+                self._myclient.truncate,
+                path,
+                len.get("size"),
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"File not touched properly: {status.message}")
+
+    touch = sync_wrapper(_touch)
+
+    async def _modified(self, path: str) -> Any:
+        status, statInfo = await _async_wrap(self._myclient.stat, path, self.timeout)
+        return statInfo.modtime
+
+    modified = sync_wrapper(_modified)
+
+    async def _exists(self, path: str, **kwargs: Any) -> bool:
+        if path in self.dircache:
+            return True
+        else:
+            status, _ = await _async_wrap(self._myclient.stat, path, self.timeout)
+            if status.code == ErrorCodes.INVALID_PATH:
+                return False
+            elif not status.ok:
+                raise OSError(f"status check failed with message: {status.message}")
+            return True
+
     async def _info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         spath = os.path.split(path)
         deet = self._ls_from_cache(spath[0])
@@ -122,7 +212,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     }
             raise OSError("_ls_from_cache() failed to function")
         else:
-            status, deet = await _async_wrap(self._myclient.stat, (path, self.timeout))
+            status, deet = await _async_wrap(self._myclient.stat, path, self.timeout)
             if not status.ok:
                 raise OSError(f"File stat request failed: {status.message}")
             if deet.flags & StatInfoFlags.IS_DIR:
@@ -144,6 +234,55 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     "type": "file",
                 }
             return ret
+
+    async def _ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
+        listing = []
+        if path in self.dircache and not kwargs.get("force_update", False):
+            if detail:
+                listing = self._ls_from_cache(path)
+                return listing
+            else:
+                return [
+                    os.path.basename(item["name"]) for item in self._ls_from_cache(path)
+                ]
+        else:
+            status, deets = await _async_wrap(
+                self._myclient.dirlist, path, DirListFlags.STAT, self.timeout
+            )
+            if not status.ok:
+                raise OSError(
+                    f"Server failed to provide directory info: {status.message}"
+                )
+            for item in deets:
+                if item.statinfo.flags & StatInfoFlags.IS_DIR:
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "directory",
+                        }
+                    )
+                elif item.statinfo.flags & StatInfoFlags.OTHER:
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "other",
+                        }
+                    )
+                else:
+                    listing.append(
+                        {
+                            "name": path + "/" + item.name,
+                            "size": item.statinfo.size,
+                            "type": "file",
+                        }
+                    )
+            self.dircache[path] = listing
+            if detail:
+                return listing
+            else:
+                return [os.path.basename(item["name"].rstrip("/")) for item in listing]
 
     async def open_async(self, path: str, mode: str = "rb", **kwargs: Any) -> Any:
         if "b" not in mode or kwargs.get("compression"):
@@ -224,7 +363,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             return f
 
 
-class XRootDFile(AbstractAsyncStreamedFile):  # type: ignore[misc]
+class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
     def __init__(
         self,
         fs: XRootDFileSystem,
@@ -257,11 +396,12 @@ class XRootDFile(AbstractAsyncStreamedFile):  # type: ignore[misc]
             raise ValueError(f"Path expected to be string, path: {path}")
 
         self._myFile = client.File()
-        status, _n = self._myFile.open(  # can this be wrapped? Can't await
+        status, _n = self._myFile.open(
             fs.protocol + "://" + fs.storage_options["hostid"] + "/" + path,
             self.mode,
             timeout=self.timeout,
         )
+
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
 
@@ -312,10 +452,9 @@ class XRootDFile(AbstractAsyncStreamedFile):  # type: ignore[misc]
             self.location = None
             self.offset = 0
 
-    async def _fetch_range(self, start: int, end: int) -> Any:
-        status, data = await _async_wrap(
-            self._myFile.read,
-            (self.metaOffset + start, self.metaOffset + end - start, self.timeout),
+    def _fetch_range(self, start: int, end: int) -> Any:
+        status, data = self._myFile.read(
+            self.metaOffset + start, self.metaOffset + end - start, timeout=self.timeout
         )
         if not status.ok:
             raise OSError(f"File did not read properly: {status.message}")
