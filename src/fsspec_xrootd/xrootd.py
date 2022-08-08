@@ -151,7 +151,6 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     async def _rmdir(self, path: str) -> None:
         status, n = await _async_wrap(self._myclient.rmdir, path, self.timeout)
-        print(status.ok)
         if not status.ok:
             raise OSError(f"Directory not removed properly: {status.message}")
 
@@ -283,6 +282,90 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 return listing
             else:
                 return [os.path.basename(item["name"].rstrip("/")) for item in listing]
+
+    async def _cat_file(self, path: str, start: int, end: int, **kwargs: Any) -> Any:
+        file = client.File()
+        status, _n = await _async_wrap(
+            file.open,
+            self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
+            OpenFlags.READ,
+            self.timeout,
+        )
+        if not status.ok:
+            raise OSError(f"File failed to read: {status.message}")
+        status, data = await _async_wrap(
+            file.read,
+            start,
+            end - start,
+            self.timeout,
+        )
+        if not status.ok:
+            raise OSError(f"Bytes failed to read from open file: {status.message}")
+        return data
+
+    async def _cat_vector_read(
+        self, path: str, chunks: list[tuple[int, int]], batch_size: int | None
+    ) -> list[bytes]:
+        _myFile = client.File()
+        status, _n = await _async_wrap(
+            _myFile.open,
+            self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
+            OpenFlags.READ,
+            self.timeout,
+        )
+        if not status.ok:
+            raise OSError(f"File did not open properly: {status.message}")
+        status, deets = await _async_wrap(_myFile.vector_read, chunks, self.timeout)
+        if not status.ok:
+            raise OSError(f"File did not vector_read properly: {status.message}")
+        data = [deet.buffer for deet in deets]
+        return data
+
+    async def _cat_ranges(
+        self,
+        paths: list[str],
+        starts: list[int],
+        ends: list[int],
+        max_gap: int | None = None,
+        batch_size: int | None = None,
+        **kwargs: Any,
+    ) -> list[bytes]:
+        """
+        # TODO: on_error
+        if max_gap is not None:
+            # use utils.merge_offset_ranges
+            raise NotImplementedError
+        if not isinstance(paths, list):
+            raise TypeError
+        if not isinstance(starts, list):
+            starts = [starts] * len(paths)
+        if not isinstance(ends, list):
+            ends = [starts] * len(paths)
+        if len(starts) != len(paths) or len(ends) != len(paths):
+            raise ValueError
+        """
+        uniquePaths: dict[str, list[tuple[int, int]]] = {}
+        [uniquePaths.update({x: []}) for x in paths if x not in uniquePaths]
+        uniquePathsOrderedList = [key for key in uniquePaths.keys()]
+        for p in uniquePathsOrderedList:
+            for i in range(0, len(paths)):
+                if p == paths[i]:
+                    uniquePaths[p].append((starts[i], ends[i] - starts[i]))
+        batch_size = batch_size or self.batch_size
+        coros = [
+            self._cat_vector_read(k, uniquePaths[k], batch_size)
+            for k in uniquePathsOrderedList
+        ]
+        results = await _run_coros_in_chunks(coros, batch_size=batch_size, nofiles=True)
+        resDict = {}
+        [
+            resDict.update({uniquePathsOrderedList[i]: results[i]})
+            for i in range(0, len(results))
+        ]
+        deets = [resDict[path].pop(0) for path in paths]
+        return deets
+        # can vector read object be indexed this way?
+        # figure out max buffer size
 
     async def open_async(self, path: str, mode: str = "rb", **kwargs: Any) -> Any:
         if "b" not in mode or kwargs.get("compression"):

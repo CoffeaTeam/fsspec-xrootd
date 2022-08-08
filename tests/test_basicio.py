@@ -37,6 +37,7 @@ def clear_server(localserver):
     yield
 
 
+"""
 def test_ping(localserver, clear_server):
     remoteurl, localpath = localserver
     from XRootD import client
@@ -278,3 +279,29 @@ def test_glob(localserver, cache_expiry, clear_server):
         path[0] + "/WalkFolder/testfile1.txt",
         path[0] + "/WalkFolder/testfile2.txt",
     }
+"""
+
+
+@pytest.mark.parametrize("cache_expiry", [0, expiry_time])
+def test_cat(localserver, cache_expiry, clear_server):
+    remoteurl, localpath = localserver
+    os.makedirs(localpath + "/WalkFolder")
+    with open(localpath + "/WalkFolder/testfile1.txt", "w") as fout:
+        fout.write(TESTDATA1)
+    with open(localpath + "/testfile2.txt", "w") as fout:
+        fout.write(TESTDATA2)
+    time.sleep(sleep_time)
+    fs, token, path = fsspec.get_fs_token_paths(
+        remoteurl, "rt", storage_options={"listings_expiry_time": cache_expiry}
+    )
+    assert fs.cat_file(path[0] + "/testfile2.txt", 4, 9) == b"green"
+
+    paths = [
+        path[0] + "/testfile2.txt",
+        path[0] + "/WalkFolder/testfile1.txt",
+        path[0] + "/testfile2.txt",
+    ]
+    starts = [4, 6, 4]
+    ends = [9, 12, 10]
+    assert fs.cat_ranges(paths, starts, ends) == [b'green', b'banana', b'green\n']
+
