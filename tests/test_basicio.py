@@ -1,7 +1,6 @@
 """Test basic IO against a xrootd server fixture"""
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
 import subprocess
@@ -37,7 +36,6 @@ def clear_server(localserver):
     yield
 
 
-"""
 def test_ping(localserver, clear_server):
     remoteurl, localpath = localserver
     from XRootD import client
@@ -279,7 +277,6 @@ def test_glob(localserver, cache_expiry, clear_server):
         path[0] + "/WalkFolder/testfile1.txt",
         path[0] + "/WalkFolder/testfile2.txt",
     }
-"""
 
 
 @pytest.mark.parametrize("cache_expiry", [0, expiry_time])
@@ -303,5 +300,4 @@ def test_cat(localserver, cache_expiry, clear_server):
     ]
     starts = [4, 6, 4]
     ends = [9, 12, 10]
-    assert fs.cat_ranges(paths, starts, ends) == [b'green', b'banana', b'green\n']
-
+    assert fs.cat_ranges(paths, starts, ends) == [b"green", b"banana", b"green\n"]
