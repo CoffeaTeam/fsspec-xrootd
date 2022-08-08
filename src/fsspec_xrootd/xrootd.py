@@ -284,42 +284,56 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 return [os.path.basename(item["name"].rstrip("/")) for item in listing]
 
     async def _cat_file(self, path: str, start: int, end: int, **kwargs: Any) -> Any:
-        file = client.File()
-        status, _n = await _async_wrap(
-            file.open,
-            self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
-            OpenFlags.READ,
-            self.timeout,
-        )
-        if not status.ok:
-            raise OSError(f"File failed to read: {status.message}")
-        status, data = await _async_wrap(
-            file.read,
-            start,
-            end - start,
-            self.timeout,
-        )
-        if not status.ok:
-            raise OSError(f"Bytes failed to read from open file: {status.message}")
-        return data
+        _myFile = client.File()
+        try:
+            status, _n = await _async_wrap(
+                _myFile.open,
+                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
+                OpenFlags.READ,
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"File failed to read: {status.message}")
+            status, data = await _async_wrap(
+                _myFile.read,
+                start,
+                end - start,
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"Bytes failed to read from open file: {status.message}")
+            return data
+        except Exception as exc:
+            status, _n = await _async_wrap(
+                _myFile.close,
+                self.timeout,
+            )
+            raise OSError(f"Something went wrong in _cat_file(): {exc}")
 
     async def _cat_vector_read(
         self, path: str, chunks: list[tuple[int, int]], batch_size: int | None
     ) -> list[bytes]:
-        _myFile = client.File()
-        status, _n = await _async_wrap(
-            _myFile.open,
-            self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
-            OpenFlags.READ,
-            self.timeout,
-        )
-        if not status.ok:
-            raise OSError(f"File did not open properly: {status.message}")
-        status, deets = await _async_wrap(_myFile.vector_read, chunks, self.timeout)
-        if not status.ok:
-            raise OSError(f"File did not vector_read properly: {status.message}")
-        data = [deet.buffer for deet in deets]
-        return data
+        try:
+            _myFile = client.File()
+            status, _n = await _async_wrap(
+                _myFile.open,
+                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
+                OpenFlags.READ,
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"File did not open properly: {status.message}")
+            status, deets = await _async_wrap(_myFile.vector_read, chunks, self.timeout)
+            if not status.ok:
+                raise OSError(f"File did not vector_read properly: {status.message}")
+            data = [deet.buffer for deet in deets]
+            return data
+        except Exception as exc:
+            status, _n = await _async_wrap(
+                _myFile.close,
+                self.timeout,
+            )
+            raise OSError(f"Something went wrong in _cat_vector_read(): {exc}")
 
     async def _cat_ranges(
         self,
