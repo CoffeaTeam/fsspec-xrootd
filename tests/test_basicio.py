@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import fsspec
 import pytest
+from fsspec_xrootd.xrootd import _make_vectors
 
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
@@ -309,22 +310,18 @@ def test_cat(localserver, cache_expiry, clear_server):
 
 
 def test_make_vectors(localserver, clear_server):
-    remoteurl, localpath = localserver
-    fs, token, path = fsspec.get_fs_token_paths(
-        remoteurl, "rt", storage_options={"listings_expiry_time": 0}
-    )
     paths = [
-        path[0] + "/File1",
-        path[0] + "/File1",
-        path[0] + "/File1",
+        "/File1",
+        "/File1",
+        "/File1",
     ]
     starts = [0, 10, 30]
     ends = [10, 30, 35]
     uniquePaths = defaultdict(list)
     for path, start, end in zip(paths, starts, ends):
         uniquePaths[path].append((start, end))
-    assert fs._make_vectors(uniquePaths[paths[0]], 100, 15) == [
-        [(0, 10), (10, 25), (25, 30), (30, 35)]
+    assert _make_vectors(uniquePaths[paths[0]], 100, 15) == [
+        [(0, 10), (10, 15), (25, 5), (30, 5)]
     ]
 
     starts = [0, 10, 30]
@@ -332,7 +329,7 @@ def test_make_vectors(localserver, clear_server):
     uniquePaths = defaultdict(list)
     for path, start, end in zip(paths, starts, ends):
         uniquePaths[path].append((start, end))
-    assert fs._make_vectors(uniquePaths[paths[0]], 2, 100) == [
-        [(0, 10), (10, 30)],
-        [(30, 35)],
+    assert _make_vectors(uniquePaths[paths[0]], 2, 100) == [
+        [(0, 10), (10, 20)],
+        [(30, 5)],
     ]
