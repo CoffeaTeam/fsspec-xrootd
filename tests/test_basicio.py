@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import time
+from collections import defaultdict
 
 import fsspec
 import pytest
@@ -300,4 +301,38 @@ def test_cat(localserver, cache_expiry, clear_server):
     ]
     starts = [4, 6, 4]
     ends = [9, 12, 10]
-    assert fs.cat_ranges(paths, starts, ends) == [b"green", b"banana", b"green\n"]
+    assert fs.cat_ranges(paths, starts, ends, batch_size=100) == [
+        b"green",
+        b"banana",
+        b"green\n",
+    ]
+
+
+def test_make_vectors(localserver, clear_server):
+    remoteurl, localpath = localserver
+    fs, token, path = fsspec.get_fs_token_paths(
+        remoteurl, "rt", storage_options={"listings_expiry_time": 0}
+    )
+    paths = [
+        path[0] + "/File1",
+        path[0] + "/File1",
+        path[0] + "/File1",
+    ]
+    starts = [0, 10, 30]
+    ends = [10, 30, 35]
+    uniquePaths = defaultdict(list)
+    for path, start, end in zip(paths, starts, ends):
+        uniquePaths[path].append((start, end))
+    assert fs._make_vectors(uniquePaths[paths[0]], 100, 15) == [
+        [(0, 10), (10, 25), (25, 30), (30, 35)]
+    ]
+
+    starts = [0, 10, 30]
+    ends = [10, 30, 35]
+    uniquePaths = defaultdict(list)
+    for path, start, end in zip(paths, starts, ends):
+        uniquePaths[path].append((start, end))
+    assert fs._make_vectors(uniquePaths[paths[0]], 2, 100) == [
+        [(0, 10), (10, 30)],
+        [(30, 35)],
+    ]
