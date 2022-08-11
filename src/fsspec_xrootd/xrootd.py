@@ -51,38 +51,40 @@ async def _async_wrap(func: Callable[..., Any], *args: Any) -> Any:
         raise OSError(status.message.strip())
     return await future
 
-def _make_vectors(
-        file_ranges: list[tuple[int, int]],
-        max_num_chunks: int,
-        max_chunk_size: int,
-    ) -> list[list[tuple[int, int]]]:
-        modified_file_ranges = []
-        for fr in file_ranges:
-            r = fr[1] - fr[0]
-            if r > max_chunk_size:
-                a, b = divmod(r, max_chunk_size)
-                for j in range(0, a):
-                    modified_file_ranges.append(
-                        (
-                            fr[0] + max_chunk_size * j,
-                            fr[0] + (j + 1) * max_chunk_size,
-                        )
-                    )
-                modified_file_ranges.append((fr[0] + max_chunk_size * a, fr[1]))
-            else:
-                modified_file_ranges.append(fr)
-        result: list[list[tuple[int, int]]] = []
-        for i in range(0, len(modified_file_ranges)):
-            if i % max_num_chunks == 0:
-                result.append([])
-            result[-1].append(modified_file_ranges[i])
 
-        vectors: list[list[tuple[int, int]]] = []
-        for vec in result:
-            vectors.append([])
-            for v in vec:
-                vectors[-1].append((v[0], v[1] - v[0]))
-        return vectors
+def _make_vectors(
+    file_ranges: list[tuple[int, int]],
+    max_num_chunks: int,
+    max_chunk_size: int,
+) -> list[list[tuple[int, int]]]:
+    modified_file_ranges = []
+    for fr in file_ranges:
+        r = fr[1] - fr[0]
+        if r > max_chunk_size:
+            a, b = divmod(r, max_chunk_size)
+            for j in range(0, a):
+                modified_file_ranges.append(
+                    (
+                        fr[0] + max_chunk_size * j,
+                        fr[0] + (j + 1) * max_chunk_size,
+                    )
+                )
+            modified_file_ranges.append((fr[0] + max_chunk_size * a, fr[1]))
+        else:
+            modified_file_ranges.append(fr)
+    result: list[list[tuple[int, int]]] = []
+    for i in range(0, len(modified_file_ranges)):
+        if i % max_num_chunks == 0:
+            result.append([])
+        result[-1].append(modified_file_ranges[i])
+
+    vectors: list[list[tuple[int, int]]] = []
+    for vec in result:
+        vectors.append([])
+        for v in vec:
+            vectors[-1].append((v[0], v[1] - v[0]))
+    return vectors
+
 
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
@@ -390,10 +392,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
             vectors = _make_vectors(chunks, max_num_chunks, max_chunk_size)
 
-            coros = [
-                _async_wrap(_myFile.vector_read, v, self.timeout)
-                for v in vectors
-            ]
+            coros = [_async_wrap(_myFile.vector_read, v, self.timeout) for v in vectors]
 
             results = await _run_coros_in_chunks(
                 coros, batch_size=batch_partition, nofiles=True
@@ -416,7 +415,6 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 self.timeout,
             )
         return {path: deets}
-
 
     async def _cat_ranges(
         self,

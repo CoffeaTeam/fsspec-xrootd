@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import fsspec
 import pytest
+
 from fsspec_xrootd.xrootd import _make_vectors
 
 TESTDATA1 = "apple\nbanana\norange\ngrape"

@@ -11,10 +11,9 @@ from ._version import version as __version__
 from .xrootd import XRootDFile, XRootDFileSystem
 
 __all__ = ("__version__", "XRootDFileSystem", "XRootDFile")
-
 try:
-    import XRootD
-    import XRootD.client
+    import XRootD  # type: ignore[import]
+    import XRootD.client  # type: ignore[import]
 
 except ModuleNotFoundError:
     raise ModuleNotFoundError(
