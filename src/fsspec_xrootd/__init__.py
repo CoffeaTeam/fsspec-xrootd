@@ -11,4 +11,3 @@ from ._version import version as __version__
 from .xrootd import XRootDFile, XRootDFileSystem
 
 __all__ = ("__version__", "XRootDFileSystem", "XRootDFile")
-
