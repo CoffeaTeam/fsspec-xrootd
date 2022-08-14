@@ -7,7 +7,7 @@ import warnings
 from collections import defaultdict
 from enum import IntEnum
 from functools import partial
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from fsspec.asyn import (  # type: ignore[import]
     AsyncFileSystem,
@@ -31,7 +31,7 @@ class ErrorCodes(IntEnum):
 
 
 def _handle(
-    future: asyncio.Future[tuple[Any, Any]],
+    future: asyncio.Future[tuple[XRootDStatus, Any]],
     status: XRootDStatus,
     content: Any,
     servers: HostList,
@@ -57,33 +57,39 @@ def _make_vectors(
     max_num_chunks: int,
     max_chunk_size: int,
 ) -> list[list[tuple[int, int]]]:
-    modified_file_ranges = []
-    for fr in file_ranges:
-        r = fr[1] - fr[0]
-        if r > max_chunk_size:
-            a, b = divmod(r, max_chunk_size)
-            for j in range(0, a):
-                modified_file_ranges.append(
-                    (
-                        fr[0] + max_chunk_size * j,
-                        fr[0] + (j + 1) * max_chunk_size,
-                    )
-                )
-            modified_file_ranges.append((fr[0] + max_chunk_size * a, fr[1]))
-        else:
-            modified_file_ranges.append(fr)
-    result: list[list[tuple[int, int]]] = []
-    for i in range(0, len(modified_file_ranges)):
-        if i % max_num_chunks == 0:
-            result.append([])
-        result[-1].append(modified_file_ranges[i])
+    """Reformats chunks to work with pyxrootd vector_read()
 
-    vectors: list[list[tuple[int, int]]] = []
-    for vec in result:
-        vectors.append([])
-        for v in vec:
-            vectors[-1].append((v[0], v[1] - v[0]))
-    return vectors
+    Parameters
+    ----------
+    file_ranges: list of 2-tuples, each with a start and end position
+    max_num_chunks: int, max # of chunks per vector_read allowed
+    max_chunk_size: int, max size of chunk allowed
+
+    Returns
+    -------
+    A list of vectors. Each vector is a list of tuples.
+    Each tuple contains the start position and length of chunk.
+    Note the format of the returned tuples is different from the given tuples.
+
+    """
+
+    def split_convert_range(start: int, stop: int) -> Iterable[tuple[int, int]]:
+        last = start
+        for pos in range(start + max_chunk_size, stop, max_chunk_size):
+            yield (last, pos - last)
+            last = pos
+        yield (last, stop - last)
+
+    groups = []
+    grp = []
+    for start, stop in file_ranges:
+        for r in split_convert_range(start, stop):
+            grp.append(r)
+            if len(grp) == max_num_chunks:
+                groups.append(grp)
+                grp = []
+    groups.append(grp)
+    return groups
 
 
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
@@ -93,7 +99,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     default_timeout = 60
     async_impl = True
 
-    cat_chunk_cache: dict[str, Any] = defaultdict(dict)
+    _dataserver_info_cache: dict[str, Any] = defaultdict(dict)
 
     def __init__(
         self,
@@ -103,16 +109,13 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         batch_size: int | None = None,
         **storage_options: Any,
     ) -> None:
+        super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self._myclient = client.FileSystem(
             XRootDFileSystem.protocol + "://" + storage_options["hostid"]
         )
-        status, _n = self._myclient.ping(15)
-        if not status.ok:
-            raise OSError(f"Could not connect to server {storage_options['hostid']}")
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
-        super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
 
     def invalidate_cache(self, path: str | None = None) -> None:
         if path is None:
@@ -178,6 +181,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         batch_size: int | None = None,
         **kwargs: Any,
     ) -> Any:
+        # TODO: ensure the coros run in order, pyxrootd won't work otherwise
         # TODO: implement on_error
         batch_size = batch_size or self.batch_size
         path = await self._expand_path(path, recursive=recursive)
@@ -341,16 +345,15 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             if not status.ok:
                 raise OSError(f"Bytes failed to read from open file: {status.message}")
             return data
-        except Exception as exc:
+        finally:
             status, _n = await _async_wrap(
                 _myFile.close,
                 self.timeout,
             )
-            raise OSError(f"Something went wrong in _cat_file(): {exc}")
 
     async def _get_max_chunk_info(self, file: Any) -> tuple[int, int]:
         data_server = file.get_property("DataServer")
-        if data_server not in XRootDFileSystem.cat_chunk_cache.keys():
+        if data_server not in XRootDFileSystem._dataserver_info_cache:
             status, result = await _async_wrap(
                 self._myclient.query, QueryCode.CONFIG, "readv_iov_max readv_ior_max"
             )
@@ -359,25 +362,19 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     f"Server query for vector read info failed: {status.message}"
                 )
             max_num_chunks, max_chunk_size = map(int, result.split(b"\n", 1))
-            XRootDFileSystem.cat_chunk_cache.update(
-                {
-                    data_server: {
-                        "max_num_chunks": max_num_chunks,
-                        "max_chunk_size": max_chunk_size,
-                    }
-                }
-            )
-        return (
-            int(XRootDFileSystem.cat_chunk_cache[data_server]["max_num_chunks"]),
-            int(XRootDFileSystem.cat_chunk_cache[data_server]["max_chunk_size"]),
-        )
+            XRootDFileSystem._dataserver_info_cache[data_server] = {
+                "max_num_chunks": int(max_num_chunks),
+                "max_chunk_size": int(max_chunk_size),
+            }
+        info = XRootDFileSystem._dataserver_info_cache[data_server]
+        return (info["max_num_chunks"], info["max_chunk_size"])
 
     async def _cat_vector_read(
         self,
         path: str,
         chunks: list[tuple[int, int]],
         batch_partition: int,
-    ) -> dict[str, list[bytes]]:
+    ) -> tuple[str, list[bytes]]:
         try:
             _myFile = client.File()
             status, _n = await _async_wrap(
@@ -397,24 +394,25 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             results = await _run_coros_in_chunks(
                 coros, batch_size=batch_partition, nofiles=True
             )
-
-            deets = []
-            for result in results:
-                if not result[0].ok:
+            deets: list[bytes] = []
+            ichunk = 0
+            for (status, buffers), vecs in zip(results, vectors):
+                if not status.ok:
                     raise OSError(
                         f"File did not vector_read properly: {status.message}"
                     )
-                for r in result[1]:
-                    deets.append(r.buffer)
-
-        except Exception as exc:
-            raise OSError(f"Something went wrong in _cat_vector_read(): {exc}")
+                for buf in buffers:
+                    if buf.length < vecs[ichunk][1]:
+                        deets[-1] += buf.buffer
+                    else:
+                        deets.append(buf.buffer)
+                        ichunk += 1
         finally:
             status, _n = await _async_wrap(
                 _myFile.close,
                 self.timeout,
             )
-        return {path: deets}
+        return (path, deets)
 
     async def _cat_ranges(
         self,
@@ -453,29 +451,15 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
         results = await _run_coros_in_chunks(coros, batch_size=batch_size, nofiles=True)
 
-        resDict: dict[str, list[bytes]] = defaultdict(list)
+        resDict = dict(results)
 
-        for r in results:
-            resDict.update(r)
-
-        deets = []
-        for path, start, end in zip(paths, starts, ends):
-            d = resDict[path].pop(0)
-            if (end - start) < len(d):
-                a, b = divmod((end - start), len(d))
-                if b > 0:
-                    for _ in range(0, a):
-                        d = d + resDict[path].pop(0)
-                else:
-                    for _ in range(0, a - 1):
-                        d = d + resDict[path].pop(0)
-            deets.append(d)
+        deets = [resDict[path].pop(0) for path, start, end in zip(paths, starts, ends)]
 
         return deets
 
     async def open_async(self, path: str, mode: str = "rb", **kwargs: Any) -> Any:
         if "b" not in mode or kwargs.get("compression"):
-            raise ValueError
+            raise NotImplementedError
         return self.open(path, mode, kwargs=kwargs)
 
     def _open(

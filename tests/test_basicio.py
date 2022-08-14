@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess
 import time
-from collections import defaultdict
 
 import fsspec
 import pytest
@@ -52,7 +51,8 @@ def test_ping(localserver, clear_server):
 def test_broken_server(localserver):
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
-        _ = fsspec.open("root://localhost:12345/")
+        with fsspec.open("root://localhost:12345/", "rt") as f:
+            _ = f.read()
 
 
 def test_read_xrd(localserver, clear_server):
@@ -310,27 +310,11 @@ def test_cat(localserver, cache_expiry, clear_server):
     ]
 
 
-def test_make_vectors(localserver, clear_server):
-    paths = [
-        "/File1",
-        "/File1",
-        "/File1",
-    ]
-    starts = [0, 10, 30]
-    ends = [10, 30, 35]
-    uniquePaths = defaultdict(list)
-    for path, start, end in zip(paths, starts, ends):
-        uniquePaths[path].append((start, end))
-    assert _make_vectors(uniquePaths[paths[0]], 100, 15) == [
+def test_make_vectors():
+    assert _make_vectors([(0, 10), (10, 30), (30, 35)], 100, 15) == [
         [(0, 10), (10, 15), (25, 5), (30, 5)]
     ]
-
-    starts = [0, 10, 30]
-    ends = [10, 30, 35]
-    uniquePaths = defaultdict(list)
-    for path, start, end in zip(paths, starts, ends):
-        uniquePaths[path].append((start, end))
-    assert _make_vectors(uniquePaths[paths[0]], 2, 100) == [
+    assert _make_vectors([(0, 10), (10, 30), (30, 35)], 2, 100) == [
         [(0, 10), (10, 20)],
         [(30, 5)],
     ]
