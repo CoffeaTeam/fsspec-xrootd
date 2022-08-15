@@ -14,7 +14,7 @@ conda install -c conda-forge fsspec-xrootd
 ## Purpose
 
 To allow fsspec to use XRootD accessible storage systems. Install fsspec-xrootd alongside fsspec and have easy access to files stored on XRootD serevrs.
-Once installed, fsspec will be able to work with urls with the 'root' protcol.
+Once installed, fsspec will be able to work with urls with the 'root' protocol.
 
 ## Documentation
 
