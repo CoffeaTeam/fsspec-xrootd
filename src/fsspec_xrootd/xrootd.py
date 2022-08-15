@@ -420,7 +420,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
         Returns
         -------
-        Tuple containing path name and a list of returned 
+        Tuple containing path name and a list of returned
         bytes in the same order as requested.
         """
         try:
