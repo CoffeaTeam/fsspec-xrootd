@@ -1,4 +1,24 @@
 # fsspec-xrootd
+An XRootD implementation for fsspec.
+
+## Install
+
+```bash
+pip install fsspec-xrootd
+```
+or
+```bash
+conda install -c conda-forge fsspec-xrootd
+```
+
+## Purpose
+
+To allow fsspec to use XRootD accessible storage systems. Install fsspec-xrootd alongside fsspec and have easy access to files stored on XRootD serevrs.
+Once installed, fsspec will be able to work with urls with the 'root' protcol.
+
+## Documentation
+
+Please refer to [RTD](https://fsspec-xrootd.readthedocs.io/en/latest/?badge=latest)
 
 [![Actions Status][actions-badge]][actions-link]
 [![Documentation Status][rtd-badge]][rtd-link]
