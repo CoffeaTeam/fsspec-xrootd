@@ -36,6 +36,19 @@ def _handle(
     content: Any,
     servers: HostList,
 ) -> None:
+    """Sets result of _async_wrap() future.
+
+    Parameters
+    ----------
+    future: asyncio future, created in _async_wrap()
+    status: XRootDStatus, pyxrootd response object
+    content: any, whatever was returned from pyxrootd function
+    servers: Hostlist, iterable list of host info (currently unused)
+
+    Returns
+    -------
+    Sets the future result.
+    """
     if future.cancelled():
         return
     try:
@@ -45,6 +58,17 @@ def _handle(
 
 
 async def _async_wrap(func: Callable[..., Any], *args: Any) -> Any:
+    """Wraps pyxrootd functions to run asynchronously. Returns future to be awiated.
+
+    Parameters
+    ----------
+    func: pyxrootd function, needs to have a callback option
+    args: non-keyworded arguments for pyxrootd function
+
+    Returns
+    -------
+    An asyncio future. Result is set when _handle() is called back.
+    """
     future = asyncio.get_running_loop().create_future()
     status = func(*args, callback=partial(_handle, future))
     if not status.ok:
@@ -352,6 +376,17 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             )
 
     async def _get_max_chunk_info(self, file: Any) -> tuple[int, int]:
+        """Queries the XRootD server for info required for pyxrootd vector_read() function.
+        Queries for maximum number of chunks and the maximum chunk size allowed by the server.
+
+        Parameters
+        ----------
+        file: xrootd client.File() object
+
+        Returns
+        -------
+        Tuple of max chunk size and max number of chunks. Both ints.
+        """
         data_server = file.get_property("DataServer")
         if data_server not in XRootDFileSystem._dataserver_info_cache:
             status, result = await _async_wrap(
@@ -373,8 +408,21 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self,
         path: str,
         chunks: list[tuple[int, int]],
-        batch_partition: int,
+        batch_size: int,
     ) -> tuple[str, list[bytes]]:
+        """Called by _cat_ranges() to vector read a file.
+
+        Parameters
+        ----------
+        path: str, file path
+        chunks: list of tuples, each in the form (start, end)
+        batch_size: int, upper limit on simultainious vector reads
+
+        Returns
+        -------
+        Tuple containing path name and a list of returned 
+        bytes in the same order as requested.
+        """
         try:
             _myFile = client.File()
             status, _n = await _async_wrap(
@@ -392,7 +440,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             coros = [_async_wrap(_myFile.vector_read, v, self.timeout) for v in vectors]
 
             results = await _run_coros_in_chunks(
-                coros, batch_size=batch_partition, nofiles=True
+                coros, batch_size=batch_size, nofiles=True
             )
             deets: list[bytes] = []
             ichunk = 0
