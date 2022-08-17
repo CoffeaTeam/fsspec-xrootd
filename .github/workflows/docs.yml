@@ -27,7 +27,7 @@ jobs:
       - name: Build documentation
         run: |
           cd docs
-          make
+          make html
           touch build/html/.nojekyll
 
       - name: Deploy documentation
