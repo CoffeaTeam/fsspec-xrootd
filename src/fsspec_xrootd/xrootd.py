@@ -116,7 +116,7 @@ def _chunks_to_vectors(
 
 
 def _vectors_to_chunks(
-    chunks: list[tuple[int, int]], result_bufs: list[Any]
+    chunks: list[tuple[int, int]], result_bufs: list[list[Any]]
 ) -> list[bytes]:
     """Reformats the results of vector_read
 
@@ -481,7 +481,6 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 _myFile.close,
                 self.timeout,
             )
-        # print(path, deets)
         return (path, deets)
 
     async def _cat_ranges(
