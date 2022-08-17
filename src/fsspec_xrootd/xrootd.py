@@ -76,7 +76,7 @@ async def _async_wrap(func: Callable[..., Any], *args: Any) -> Any:
     return await future
 
 
-def _make_vectors(
+def _chunks_to_vectors(
     file_ranges: list[tuple[int, int]],
     max_num_chunks: int,
     max_chunk_size: int,
@@ -94,7 +94,6 @@ def _make_vectors(
     A list of vectors. Each vector is a list of tuples.
     Each tuple contains the start position and length of chunk.
     Note the format of the returned tuples is different from the given tuples.
-
     """
 
     def split_convert_range(start: int, stop: int) -> Iterable[tuple[int, int]]:
@@ -114,6 +113,38 @@ def _make_vectors(
                 grp = []
     groups.append(grp)
     return groups
+
+
+def _vectors_to_chunks(
+    chunks: list[tuple[int, int]], result_bufs: list[Any]
+) -> list[bytes]:
+    """Reformats the results of vector_read
+
+    Parameters
+    ----------
+    chunks: list of 2-tuples, each in format (start, length)
+    result_bufs: list of VectorReadInfo objects from pyxrootd
+
+    Returns
+    -------
+    List of bytes
+    """
+    deets: list[bytes] = [b""]
+    ichunk = 0
+    for buffer in result_bufs:
+        for buf in buffer:
+            try:
+                if buf.offset < chunks[ichunk][0]:
+                    deets[-1] += buf.buffer
+                else:
+                    deets.append(buf.buffer)
+                    ichunk += 1
+            except IndexError:
+                deets[-1] += buf.buffer
+
+    if deets[0] == b"":
+        deets.pop(0)
+    return deets
 
 
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
@@ -435,26 +466,22 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 raise OSError(f"File did not open properly: {status.message}")
 
             max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
-            vectors = _make_vectors(chunks, max_num_chunks, max_chunk_size)
+            vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
 
             coros = [_async_wrap(_myFile.vector_read, v, self.timeout) for v in vectors]
 
             results = await _run_coros_in_chunks(
                 coros, batch_size=batch_size, nofiles=True
             )
-            deets: list[bytes] = []
-            ichunk = 0
-            for (status, buffers), vecs in zip(results, vectors):
+            result_bufs = []
+            for (status, buffers) in results:
                 if not status.ok:
                     raise OSError(
                         f"File did not vector_read properly: {status.message}"
                     )
-                for buf in buffers:
-                    if buf.length < vecs[ichunk][1]:
-                        deets[-1] += buf.buffer
-                    else:
-                        deets.append(buf.buffer)
-                        ichunk += 1
+                result_bufs.append(buffers)
+            deets = _vectors_to_chunks(chunks, result_bufs)
+
         finally:
             status, _n = await _async_wrap(
                 _myFile.close,

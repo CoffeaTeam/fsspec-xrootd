@@ -9,7 +9,7 @@ import time
 import fsspec
 import pytest
 
-from fsspec_xrootd.xrootd import _make_vectors
+from fsspec_xrootd.xrootd import _chunks_to_vectors, _vectors_to_chunks
 
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
@@ -51,7 +51,9 @@ def test_ping(localserver, clear_server):
 def test_broken_server(localserver):
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
-        with fsspec.open("root://localhost:12345/", "rt") as f:
+        with fsspec.open(
+            "root://localhost:12345/", "rt", timeout = 5
+        ) as f:
             _ = f.read()
 
 
@@ -310,11 +312,36 @@ def test_cat(localserver, cache_expiry, clear_server):
     ]
 
 
-def test_make_vectors():
-    assert _make_vectors([(0, 10), (10, 30), (30, 35)], 100, 15) == [
+def test_chunks_to_vectors():
+    assert _chunks_to_vectors([(0, 10), (10, 30), (30, 35)], 100, 15) == [
         [(0, 10), (10, 15), (25, 5), (30, 5)]
     ]
-    assert _make_vectors([(0, 10), (10, 30), (30, 35)], 2, 100) == [
+    assert _chunks_to_vectors([(0, 10), (10, 30), (30, 35)], 2, 100) == [
         [(0, 10), (10, 20)],
         [(30, 5)],
     ]
+
+
+def test_vectors_to_chunks(localserver, clear_server):
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write("0000000000000000000000000000000000000000")
+
+    from XRootD import client
+
+    with client.File() as f:
+        status, _ = f.open(remoteurl + "/testfile.txt")
+        if not status.ok:
+            raise RuntimeError(status)
+        status, res = f.vector_read([(0,10),(10,10), (20, 10), (30, 10)])
+        if not status.ok:
+            raise RuntimeError(status)
+        # This one checks the more likely case.
+        assert _vectors_to_chunks([(0,10),(10,20), (30, 10)], [res]) == [b"0000000000", b"00000000000000000000", b"0000000000"]
+
+        status, res = f.vector_read([(0,10),(10,10), (20, 10)])
+        if not status.ok:
+            raise RuntimeError(status)
+        # This one check and edge case.
+        assert _vectors_to_chunks([(0,10),(10,20)], [res]) == [b"0000000000", b"00000000000000000000"]
+        f.close()
