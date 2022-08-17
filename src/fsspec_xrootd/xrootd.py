@@ -1,45 +1,169 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import os.path
 import warnings
+from collections import defaultdict
 from enum import IntEnum
-from typing import Any
+from functools import partial
+from typing import Any, Callable, Iterable
 
-from fsspec.dircache import DirCache  # type: ignore[import]
-from fsspec.spec import AbstractBufferedFile, AbstractFileSystem  # type: ignore[import]
+from fsspec.asyn import (  # type: ignore[import]
+    AsyncFileSystem,
+    _run_coros_in_chunks,
+    sync_wrapper,
+)
+from fsspec.spec import AbstractBufferedFile  # type: ignore[import]
 from XRootD import client  # type: ignore[import]
 from XRootD.client.flags import (  # type: ignore[import]
     DirListFlags,
     MkDirFlags,
     OpenFlags,
+    QueryCode,
     StatInfoFlags,
 )
+from XRootD.client.responses import HostList, XRootDStatus  # type: ignore[import]
 
 
 class ErrorCodes(IntEnum):
     INVALID_PATH = 400
 
 
-class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
+def _handle(
+    future: asyncio.Future[tuple[XRootDStatus, Any]],
+    status: XRootDStatus,
+    content: Any,
+    servers: HostList,
+) -> None:
+    """Sets result of _async_wrap() future.
+
+    Parameters
+    ----------
+    future: asyncio future, created in _async_wrap()
+    status: XRootDStatus, pyxrootd response object
+    content: any, whatever was returned from pyxrootd function
+    servers: Hostlist, iterable list of host info (currently unused)
+
+    Returns
+    -------
+    Sets the future result.
+    """
+    if future.cancelled():
+        return
+    try:
+        future.get_loop().call_soon_threadsafe(future.set_result, (status, content))
+    except Exception as exc:
+        future.get_loop().call_soon_threadsafe(future.set_exception, exc)
+
+
+async def _async_wrap(func: Callable[..., Any], *args: Any) -> Any:
+    """Wraps pyxrootd functions to run asynchronously. Returns future to be awiated.
+
+    Parameters
+    ----------
+    func: pyxrootd function, needs to have a callback option
+    args: non-keyworded arguments for pyxrootd function
+
+    Returns
+    -------
+    An asyncio future. Result is set when _handle() is called back.
+    """
+    future = asyncio.get_running_loop().create_future()
+    status = func(*args, callback=partial(_handle, future))
+    if not status.ok:
+        raise OSError(status.message.strip())
+    return await future
+
+
+def _chunks_to_vectors(
+    file_ranges: list[tuple[int, int]],
+    max_num_chunks: int,
+    max_chunk_size: int,
+) -> list[list[tuple[int, int]]]:
+    """Reformats chunks to work with pyxrootd vector_read()
+
+    Parameters
+    ----------
+    file_ranges: list of 2-tuples, each with a start and end position
+    max_num_chunks: int, max # of chunks per vector_read allowed
+    max_chunk_size: int, max size of chunk allowed
+
+    Returns
+    -------
+    A list of vectors. Each vector is a list of tuples.
+    Each tuple contains the start position and length of chunk.
+    Note the format of the returned tuples is different from the given tuples.
+    """
+
+    def split_convert_range(start: int, stop: int) -> Iterable[tuple[int, int]]:
+        last = start
+        for pos in range(start + max_chunk_size, stop, max_chunk_size):
+            yield (last, pos - last)
+            last = pos
+        yield (last, stop - last)
+
+    groups = []
+    grp = []
+    for start, stop in file_ranges:
+        for r in split_convert_range(start, stop):
+            grp.append(r)
+            if len(grp) == max_num_chunks:
+                groups.append(grp)
+                grp = []
+    groups.append(grp)
+    return groups
+
+
+def _vectors_to_chunks(
+    chunks: list[tuple[int, int]], result_bufs: list[list[Any]]
+) -> list[bytes]:
+    """Reformats the results of vector_read
+
+    Parameters
+    ----------
+    chunks: list of 2-tuples, each in format (start, end)
+    result_bufs: list of VectorReadInfo objects from pyxrootd
+
+    Returns
+    -------
+    List of bytes
+    """
+    subchunks = (buf for buffers in result_bufs for buf in buffers)
+
+    deets: list[bytes] = []
+    for chunk in chunks:
+        chunk_length = chunk[1] - chunk[0]
+        chunk_data = b""
+        while len(chunk_data) < chunk_length:
+            chunk_data += next(subchunks).buffer
+        deets.append(chunk_data)
+    return deets
+
+
+class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     protocol = "root"
     root_marker = "/"
     default_timeout = 60
+    async_impl = True
 
-    def __init__(self, *args: list[Any], **storage_options: Any) -> None:
+    _dataserver_info_cache: dict[str, Any] = defaultdict(dict)
+
+    def __init__(
+        self,
+        *args: list[Any],
+        asynchronous: bool = False,
+        loop: Any = None,
+        batch_size: int | None = None,
+        **storage_options: Any,
+    ) -> None:
+        super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self._myclient = client.FileSystem(
             XRootDFileSystem.protocol + "://" + storage_options["hostid"]
         )
-        status, _n = self._myclient.ping(15)
-        if not status.ok:
-            raise OSError(f"Could not connect to server {storage_options['hostid']}")
-        self._intrans = False
-        self.dircache = DirCache(
-            use_listings_cache=True,
-            listings_expiry_time=storage_options.get("listings_expiry_time", 0),
-        )
+        storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
 
     def invalidate_cache(self, path: str | None = None) -> None:
@@ -75,66 +199,97 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
         else:
             raise ValueError("Strip protocol not given string or list")
 
-    def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:
+    async def _mkdir(
+        self, path: str, create_parents: bool = True, **kwargs: Any
+    ) -> None:
         if create_parents:
-            status, n = self._myclient.mkdir(
-                path, MkDirFlags.MAKEPATH, timeout=self.timeout
+            status, n = await _async_wrap(
+                self._myclient.mkdir, path, MkDirFlags.MAKEPATH, self.timeout
             )
         else:
-            status, n = self._myclient.mkdir(path, timeout=self.timeout)
+            status, n = await _async_wrap(self._myclient.mkdir, path, self.timeout)
         if not status.ok:
             raise OSError(f"Directory not made properly: {status.message}")
 
-    def makedirs(self, path: str, exist_ok: bool = False) -> None:
+    async def _makedirs(self, path: str, exist_ok: bool = False) -> None:
         if not exist_ok:
-            if self.exists(path):
+            if await self._exists(path):
                 raise OSError(
                     "Location already exists and exist_ok arg was set to false"
                 )
-        status, n = self._myclient.mkdir(
-            path, MkDirFlags.MAKEPATH, timeout=self.timeout
+        status, n = await _async_wrap(
+            self._myclient.mkdir, path, MkDirFlags.MAKEPATH, self.timeout
         )
         if not status.ok and not (status.code == ErrorCodes.INVALID_PATH and exist_ok):
             raise OSError(f"Directory not made properly: {status.message}")
 
-    def rmdir(self, path: str) -> None:
-        status, n = self._myclient.rmdir(path, timeout=self.timeout)
+    async def _rm(
+        self,
+        path: str,
+        recursive: bool = False,
+        batch_size: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        # TODO: ensure the coros run in order, pyxrootd won't work otherwise
+        # TODO: implement on_error
+        batch_size = batch_size or self.batch_size
+        path = await self._expand_path(path, recursive=recursive)
+        return await _run_coros_in_chunks(
+            [self._rm_file(p, **kwargs) for p in reversed(path)],
+            batch_size=batch_size,
+            nofiles=True,
+        )
+
+    async def _rmdir(self, path: str) -> None:
+        status, n = await _async_wrap(self._myclient.rmdir, path, self.timeout)
         if not status.ok:
             raise OSError(f"Directory not removed properly: {status.message}")
 
-    def _rm(self, path: str) -> None:
-        status, n = self._myclient.rm(path, timeout=self.timeout)
+    rmdir = sync_wrapper(_rmdir)
+
+    async def _rm_file(self, path: str) -> None:
+        status, n = await _async_wrap(self._myclient.rm, path, self.timeout)
         if not status.ok:
             raise OSError(f"File not removed properly: {status.message}")
 
-    def touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
-        if truncate or not self.exists(path):
-            status, _ = self._myclient.truncate(path, 0, timeout=self.timeout)
+    async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
+        if truncate or not await self._exists(path):
+            status, _ = await _async_wrap(
+                self._myclient.truncate, path, 0, self.timeout
+            )
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
         else:
-            status, _ = self._myclient.truncate(
-                path, self.info(path).get("size"), timeout=self.timeout
+            len = await self._info(path)
+            status, _ = await _async_wrap(
+                self._myclient.truncate,
+                path,
+                len.get("size"),
+                self.timeout,
             )
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
 
-    def modified(self, path: str) -> Any:
-        status, statInfo = self._myclient.stat(path, timeout=self.timeout)
+    touch = sync_wrapper(_touch)
+
+    async def _modified(self, path: str) -> Any:
+        status, statInfo = await _async_wrap(self._myclient.stat, path, self.timeout)
         return statInfo.modtime
 
-    def exists(self, path: str, **kwargs: Any) -> bool:
+    modified = sync_wrapper(_modified)
+
+    async def _exists(self, path: str, **kwargs: Any) -> bool:
         if path in self.dircache:
             return True
         else:
-            status, _ = self._myclient.stat(path, timeout=self.timeout)
+            status, _ = await _async_wrap(self._myclient.stat, path, self.timeout)
             if status.code == ErrorCodes.INVALID_PATH:
                 return False
             elif not status.ok:
                 raise OSError(f"status check failed with message: {status.message}")
             return True
 
-    def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
+    async def _info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         spath = os.path.split(path)
         deet = self._ls_from_cache(spath[0])
         if deet is not None:
@@ -147,7 +302,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                     }
             raise OSError("_ls_from_cache() failed to function")
         else:
-            status, deet = self._myclient.stat(path, timeout=self.timeout)
+            status, deet = await _async_wrap(self._myclient.stat, path, self.timeout)
             if not status.ok:
                 raise OSError(f"File stat request failed: {status.message}")
             if deet.flags & StatInfoFlags.IS_DIR:
@@ -170,7 +325,7 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                 }
             return ret
 
-    def ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
+    async def _ls(self, path: str, detail: bool = True, **kwargs: Any) -> list[Any]:
         listing = []
         if path in self.dircache and not kwargs.get("force_update", False):
             if detail:
@@ -181,8 +336,8 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                     os.path.basename(item["name"]) for item in self._ls_from_cache(path)
                 ]
         else:
-            status, deets = self._myclient.dirlist(
-                path, DirListFlags.STAT, timeout=self.timeout
+            status, deets = await _async_wrap(
+                self._myclient.dirlist, path, DirListFlags.STAT, self.timeout
             )
             if not status.ok:
                 raise OSError(
@@ -218,6 +373,163 @@ class XRootDFileSystem(AbstractFileSystem):  # type: ignore[misc]
                 return listing
             else:
                 return [os.path.basename(item["name"].rstrip("/")) for item in listing]
+
+    async def _cat_file(self, path: str, start: int, end: int, **kwargs: Any) -> Any:
+        _myFile = client.File()
+        try:
+            status, _n = await _async_wrap(
+                _myFile.open,
+                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
+                OpenFlags.READ,
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"File failed to read: {status.message}")
+            status, data = await _async_wrap(
+                _myFile.read,
+                start,
+                end - start,
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"Bytes failed to read from open file: {status.message}")
+            return data
+        finally:
+            status, _n = await _async_wrap(
+                _myFile.close,
+                self.timeout,
+            )
+
+    async def _get_max_chunk_info(self, file: Any) -> tuple[int, int]:
+        """Queries the XRootD server for info required for pyxrootd vector_read() function.
+        Queries for maximum number of chunks and the maximum chunk size allowed by the server.
+
+        Parameters
+        ----------
+        file: xrootd client.File() object
+
+        Returns
+        -------
+        Tuple of max chunk size and max number of chunks. Both ints.
+        """
+        data_server = file.get_property("DataServer")
+        if data_server not in XRootDFileSystem._dataserver_info_cache:
+            status, result = await _async_wrap(
+                self._myclient.query, QueryCode.CONFIG, "readv_iov_max readv_ior_max"
+            )
+            if not status.ok:
+                raise OSError(
+                    f"Server query for vector read info failed: {status.message}"
+                )
+            max_num_chunks, max_chunk_size = map(int, result.split(b"\n", 1))
+            XRootDFileSystem._dataserver_info_cache[data_server] = {
+                "max_num_chunks": int(max_num_chunks),
+                "max_chunk_size": int(max_chunk_size),
+            }
+        info = XRootDFileSystem._dataserver_info_cache[data_server]
+        return (info["max_num_chunks"], info["max_chunk_size"])
+
+    async def _cat_vector_read(
+        self,
+        path: str,
+        chunks: list[tuple[int, int]],
+        batch_size: int,
+    ) -> tuple[str, list[bytes]]:
+        """Called by _cat_ranges() to vector read a file.
+
+        Parameters
+        ----------
+        path: str, file path
+        chunks: list of tuples, each in the form (start, end)
+        batch_size: int, upper limit on simultainious vector reads
+
+        Returns
+        -------
+        Tuple containing path name and a list of returned
+        bytes in the same order as requested.
+        """
+        try:
+            _myFile = client.File()
+            status, _n = await _async_wrap(
+                _myFile.open,
+                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
+                OpenFlags.READ,
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"File did not open properly: {status.message}")
+
+            max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
+            vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
+
+            coros = [_async_wrap(_myFile.vector_read, v, self.timeout) for v in vectors]
+
+            results = await _run_coros_in_chunks(
+                coros, batch_size=batch_size, nofiles=True
+            )
+            result_bufs = []
+            for (status, buffers) in results:
+                if not status.ok:
+                    raise OSError(
+                        f"File did not vector_read properly: {status.message}"
+                    )
+                result_bufs.append(buffers)
+            deets = _vectors_to_chunks(chunks, result_bufs)
+
+        finally:
+            status, _n = await _async_wrap(
+                _myFile.close,
+                self.timeout,
+            )
+        return (path, deets)
+
+    async def _cat_ranges(
+        self,
+        paths: list[str],
+        starts: list[int],
+        ends: list[int],
+        max_gap: int | None = None,
+        batch_size: int | None = None,
+        **kwargs: Any,
+    ) -> list[bytes]:
+
+        # TODO: on_error
+        if max_gap is not None:
+            # use utils.merge_offset_ranges
+            raise NotImplementedError
+        if not isinstance(paths, list):
+            raise TypeError
+        if not isinstance(starts, list):
+            raise TypeError
+        if not isinstance(ends, list):
+            raise TypeError
+        if len(starts) != len(paths) or len(ends) != len(paths):
+            raise ValueError
+
+        uniquePaths = defaultdict(list)
+
+        for path, start, end in zip(paths, starts, ends):
+            uniquePaths[path].append((start, end))
+
+        batch_size = batch_size or self.batch_size
+
+        coros = [
+            self._cat_vector_read(key, uniquePaths[key], batch_size)
+            for key in uniquePaths.keys()
+        ]
+
+        results = await _run_coros_in_chunks(coros, batch_size=batch_size, nofiles=True)
+
+        resDict = dict(results)
+
+        deets = [resDict[path].pop(0) for path in paths]
+
+        return deets
+
+    async def open_async(self, path: str, mode: str = "rb", **kwargs: Any) -> Any:
+        if "b" not in mode or kwargs.get("compression"):
+            raise NotImplementedError
+        return self.open(path, mode, kwargs=kwargs)
 
     def _open(
         self,

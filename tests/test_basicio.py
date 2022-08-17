@@ -9,6 +9,8 @@ import time
 import fsspec
 import pytest
 
+from fsspec_xrootd.xrootd import _chunks_to_vectors, _vectors_to_chunks
+
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
 sleep_time = 0.2
@@ -49,7 +51,8 @@ def test_ping(localserver, clear_server):
 def test_broken_server(localserver):
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
-        _ = fsspec.open("root://localhost:12345/")
+        with fsspec.open("root://localhost:12345/", "rt", timeout=5) as f:
+            _ = f.read()
 
 
 def test_read_xrd(localserver, clear_server):
@@ -103,9 +106,8 @@ def test_write_fsspec(localserver, clear_server):
 
 def test_append_fsspec(localserver, clear_server):
     remoteurl, localpath = localserver
-    with fsspec.open(remoteurl + "/testfile.txt", "wt") as f:
-        f.write(TESTDATA1)
-        f.flush()
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
     with fsspec.open(remoteurl + "/testfile.txt", "at") as f:
         f.write(TESTDATA2)
         f.flush()
@@ -116,12 +118,12 @@ def test_append_fsspec(localserver, clear_server):
 @pytest.mark.parametrize("cache_expiry", [0, expiry_time])
 def test_mk_and_rm_dir_fsspec(localserver, cache_expiry, clear_server):
     remoteurl, localpath = localserver
-    with fsspec.open(remoteurl + "/Folder1/testfile1.txt", "wt") as f:
-        f.write(TESTDATA2)
-        f.flush()
-    with fsspec.open(remoteurl + "/Folder2/testfile2.txt", "wt") as f:
-        f.write(TESTDATA2)
-        f.flush()
+    os.makedirs(localpath + "/Folder1")
+    os.makedirs(localpath + "/Folder2")
+    with open(localpath + "/Folder1/testfile1.txt", "w") as fout:
+        fout.write(TESTDATA2)
+    with open(localpath + "/Folder2/testfile2.txt", "w") as fout:
+        fout.write(TESTDATA2)
     fs, token, path = fsspec.get_fs_token_paths(
         remoteurl, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
@@ -138,7 +140,6 @@ def test_mk_and_rm_dir_fsspec(localserver, cache_expiry, clear_server):
 
     with pytest.raises(OSError):
         fs.mkdir(path[0] + "/Folder4/Folder44", False)
-
     fs.mkdirs(path[0] + "/Folder4/Folder44")
     time.sleep(sleep_time)
     assert set(fs.ls(path[0], False)) == {
@@ -151,7 +152,6 @@ def test_mk_and_rm_dir_fsspec(localserver, cache_expiry, clear_server):
     time.sleep(sleep_time)
     with pytest.raises(OSError):
         fs.mkdirs(path[0] + "/Folder4", False)
-
     fs.rm(path[0] + "/Folder4", True)
     time.sleep(sleep_time)
     assert set(fs.ls(path[0], False)) == {
@@ -169,9 +169,8 @@ def test_mk_and_rm_dir_fsspec(localserver, cache_expiry, clear_server):
 def test_touch_modified(localserver, clear_server):
     remoteurl, localpath = localserver
     time.sleep(sleep_time)
-    with fsspec.open(remoteurl + "/testfile.txt", "wt") as f:
-        f.write(TESTDATA1)
-        f.flush()
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
     fs, token, path = fsspec.get_fs_token_paths(
         remoteurl, "rt", storage_options={"listings_expiry_time": expiry_time}
     )
@@ -204,9 +203,8 @@ def test_dir_cache(localserver, clear_server):
 @pytest.mark.parametrize("cache_expiry", [0, expiry_time])
 def test_info(localserver, cache_expiry, clear_server):
     remoteurl, localpath = localserver
-    with fsspec.open(remoteurl + "/testfile.txt", "wt") as f:
-        f.write(TESTDATA1)
-        f.flush()
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
     fs, token, path = fsspec.get_fs_token_paths(
         remoteurl, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
@@ -222,12 +220,12 @@ def test_walk_find(localserver, cache_expiry, clear_server):
     fs, token, path = fsspec.get_fs_token_paths(
         remoteurl, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
-    with fsspec.open(remoteurl + "/WalkFolder/testfile1.txt", "wt") as f:
-        f.write(TESTDATA2)
-        f.flush()
-    with fsspec.open(remoteurl + "/WalkFolder/InnerFolder/testfile2.txt", "wt") as f:
-        f.write(TESTDATA2)
-        f.flush()
+    os.makedirs(localpath + "/WalkFolder")
+    os.makedirs(localpath + "/WalkFolder/InnerFolder")
+    with open(localpath + "/WalkFolder/testfile1.txt", "w") as fout:
+        fout.write(TESTDATA2)
+    with open(localpath + "/WalkFolder/InnerFolder/testfile2.txt", "w") as fout:
+        fout.write(TESTDATA2)
     out = fs.walk(path[0] + "/WalkFolder")
     listing = []
     for item in out:
@@ -250,12 +248,12 @@ def test_walk_find(localserver, cache_expiry, clear_server):
 @pytest.mark.parametrize("cache_expiry", [0, expiry_time])
 def test_du(localserver, cache_expiry, clear_server):
     remoteurl, localpath = localserver
-    with fsspec.open(remoteurl + "/WalkFolder/testfile1.txt", "wt") as f:
-        f.write(TESTDATA2)
-        f.flush()
-    with fsspec.open(remoteurl + "/WalkFolder/InnerFolder/testfile2.txt", "wt") as f:
-        f.write(TESTDATA2)
-        f.flush()
+    os.makedirs(localpath + "/WalkFolder")
+    os.makedirs(localpath + "/WalkFolder/InnerFolder")
+    with open(localpath + "/WalkFolder/testfile1.txt", "w") as fout:
+        fout.write(TESTDATA2)
+    with open(localpath + "/WalkFolder/InnerFolder/testfile2.txt", "w") as fout:
+        fout.write(TESTDATA2)
     fs, token, path = fsspec.get_fs_token_paths(
         remoteurl, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
@@ -269,18 +267,77 @@ def test_du(localserver, cache_expiry, clear_server):
 @pytest.mark.parametrize("cache_expiry", [0, expiry_time])
 def test_glob(localserver, cache_expiry, clear_server):
     remoteurl, localpath = localserver
-    with fsspec.open(remoteurl + "/WalkFolder/testfile1.txt", "wt") as f:
-        f.write(TESTDATA2)
-        f.flush()
-    with fsspec.open(remoteurl + "/WalkFolder/testfile2.txt", "wt") as f:
-        f.write(TESTDATA2)
-        f.flush()
+    os.makedirs(localpath + "/WalkFolder")
+    with open(localpath + "/WalkFolder/testfile1.txt", "w") as fout:
+        fout.write(TESTDATA2)
+    with open(localpath + "/WalkFolder/testfile2.txt", "w") as fout:
+        fout.write(TESTDATA2)
     time.sleep(sleep_time)
     fs, token, path = fsspec.get_fs_token_paths(
         remoteurl, "rt", storage_options={"listings_expiry_time": cache_expiry}
     )
-    print(fs.glob(path[0] + "/*.txt"))
     assert set(fs.glob(path[0] + "/WalkFolder/*.txt")) == {
         path[0] + "/WalkFolder/testfile1.txt",
         path[0] + "/WalkFolder/testfile2.txt",
     }
+
+
+@pytest.mark.parametrize("cache_expiry", [0, expiry_time])
+def test_cat(localserver, cache_expiry, clear_server):
+    remoteurl, localpath = localserver
+    os.makedirs(localpath + "/WalkFolder")
+    with open(localpath + "/WalkFolder/testfile1.txt", "w") as fout:
+        fout.write(TESTDATA1)
+    with open(localpath + "/testfile2.txt", "w") as fout:
+        fout.write(TESTDATA2)
+    time.sleep(sleep_time)
+    fs, token, path = fsspec.get_fs_token_paths(
+        remoteurl, "rt", storage_options={"listings_expiry_time": cache_expiry}
+    )
+    assert fs.cat_file(path[0] + "/testfile2.txt", 4, 9) == b"green"
+
+    paths = [
+        path[0] + "/testfile2.txt",
+        path[0] + "/WalkFolder/testfile1.txt",
+        path[0] + "/testfile2.txt",
+    ]
+    starts = [4, 6, 4]
+    ends = [9, 12, 10]
+    assert fs.cat_ranges(paths, starts, ends, batch_size=100) == [
+        b"green",
+        b"banana",
+        b"green\n",
+    ]
+
+
+def test_chunks_to_vectors():
+    assert _chunks_to_vectors([(0, 10), (10, 30), (30, 35)], 100, 15) == [
+        [(0, 10), (10, 15), (25, 5), (30, 5)]
+    ]
+    assert _chunks_to_vectors([(0, 10), (10, 30), (30, 35)], 2, 100) == [
+        [(0, 10), (10, 20)],
+        [(30, 5)],
+    ]
+
+
+def test_vectors_to_chunks(localserver, clear_server):
+    from dataclasses import dataclass
+
+    @dataclass
+    class MockVectorReadInfo:
+        offset: int
+        length: int
+        buffer: bytes
+
+    res = [
+        MockVectorReadInfo(0, 10, b"0" * 10),
+        MockVectorReadInfo(10, 10, b"0" * 10),
+        MockVectorReadInfo(20, 10, b"0" * 10),
+        MockVectorReadInfo(30, 10, b"0" * 10),
+    ]
+
+    assert _vectors_to_chunks([(0, 10), (10, 30), (30, 40)], [res]) == [
+        b"0" * 10,
+        b"0" * 20,
+        b"0" * 10,
+    ]
