@@ -51,9 +51,7 @@ def test_ping(localserver, clear_server):
 def test_broken_server(localserver):
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
-        with fsspec.open(
-            "root://localhost:12345/", "rt", timeout = 5
-        ) as f:
+        with fsspec.open("root://localhost:12345/", "rt", timeout=5) as f:
             _ = f.read()
 
 
@@ -333,15 +331,22 @@ def test_vectors_to_chunks(localserver, clear_server):
         status, _ = f.open(remoteurl + "/testfile.txt")
         if not status.ok:
             raise RuntimeError(status)
-        status, res = f.vector_read([(0,10),(10,10), (20, 10), (30, 10)])
+        status, res = f.vector_read([(0, 10), (10, 10), (20, 10), (30, 10)])
         if not status.ok:
             raise RuntimeError(status)
         # This one checks the more likely case.
-        assert _vectors_to_chunks([(0,10),(10,20), (30, 10)], [res]) == [b"0000000000", b"00000000000000000000", b"0000000000"]
+        assert _vectors_to_chunks([(0, 10), (10, 20), (30, 10)], [res]) == [
+            b"0000000000",
+            b"00000000000000000000",
+            b"0000000000",
+        ]
 
-        status, res = f.vector_read([(0,10),(10,10), (20, 10)])
+        status, res = f.vector_read([(0, 10), (10, 10), (20, 10)])
         if not status.ok:
             raise RuntimeError(status)
         # This one check and edge case.
-        assert _vectors_to_chunks([(0,10),(10,20)], [res]) == [b"0000000000", b"00000000000000000000"]
+        assert _vectors_to_chunks([(0, 10), (10, 20)], [res]) == [
+            b"0000000000",
+            b"00000000000000000000",
+        ]
         f.close()
