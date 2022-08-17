@@ -122,28 +122,22 @@ def _vectors_to_chunks(
 
     Parameters
     ----------
-    chunks: list of 2-tuples, each in format (start, length)
+    chunks: list of 2-tuples, each in format (start, end)
     result_bufs: list of VectorReadInfo objects from pyxrootd
 
     Returns
     -------
     List of bytes
     """
-    deets: list[bytes] = [b""]
-    ichunk = 0
-    for buffer in result_bufs:
-        for buf in buffer:
-            try:
-                if buf.offset < chunks[ichunk][0]:
-                    deets[-1] += buf.buffer
-                else:
-                    deets.append(buf.buffer)
-                    ichunk += 1
-            except IndexError:
-                deets[-1] += buf.buffer
+    subchunks = (buf for buffers in result_bufs for buf in buffers)
 
-    if deets[0] == b"":
-        deets.pop(0)
+    deets: list[bytes] = []
+    for chunk in chunks:
+        chunk_length = chunk[1] - chunk[0]
+        chunk_data = b""
+        while len(chunk_data) < chunk_length:
+            chunk_data += next(subchunks).buffer
+        deets.append(chunk_data)
     return deets
 
 
@@ -487,6 +481,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 _myFile.close,
                 self.timeout,
             )
+        # print(path, deets)
         return (path, deets)
 
     async def _cat_ranges(
@@ -528,7 +523,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
         resDict = dict(results)
 
-        deets = [resDict[path].pop(0) for path, start, end in zip(paths, starts, ends)]
+        deets = [resDict[path].pop(0) for path in paths]
 
         return deets
 

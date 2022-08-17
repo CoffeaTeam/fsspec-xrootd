@@ -321,32 +321,23 @@ def test_chunks_to_vectors():
 
 
 def test_vectors_to_chunks(localserver, clear_server):
-    remoteurl, localpath = localserver
-    with open(localpath + "/testfile.txt", "w") as fout:
-        fout.write("0000000000000000000000000000000000000000")
+    from dataclasses import dataclass
 
-    from XRootD import client
+    @dataclass
+    class MockVectorReadInfo:
+        offset: int
+        length: int
+        buffer: bytes
 
-    with client.File() as f:
-        status, _ = f.open(remoteurl + "/testfile.txt")
-        if not status.ok:
-            raise RuntimeError(status)
-        status, res = f.vector_read([(0, 10), (10, 10), (20, 10), (30, 10)])
-        if not status.ok:
-            raise RuntimeError(status)
-        # This one checks the more likely case.
-        assert _vectors_to_chunks([(0, 10), (10, 20), (30, 10)], [res]) == [
-            b"0000000000",
-            b"00000000000000000000",
-            b"0000000000",
-        ]
+    res = [
+        MockVectorReadInfo(0, 10, b"0" * 10),
+        MockVectorReadInfo(10, 10, b"0" * 10),
+        MockVectorReadInfo(20, 10, b"0" * 10),
+        MockVectorReadInfo(30, 10, b"0" * 10),
+    ]
 
-        status, res = f.vector_read([(0, 10), (10, 10), (20, 10)])
-        if not status.ok:
-            raise RuntimeError(status)
-        # This one check and edge case.
-        assert _vectors_to_chunks([(0, 10), (10, 20)], [res]) == [
-            b"0000000000",
-            b"00000000000000000000",
-        ]
-        f.close()
+    assert _vectors_to_chunks([(0, 10), (10, 30), (30, 40)], [res]) == [
+        b"0" * 10,
+        b"0" * 20,
+        b"0" * 10,
+    ]
