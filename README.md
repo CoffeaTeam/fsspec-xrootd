@@ -46,6 +46,6 @@ Please refer to
 [pypi-platforms]:           https://img.shields.io/pypi/pyversions/fsspec-xrootd
 [pypi-version]:             https://badge.fury.io/py/fsspec-xrootd.svg
 [rtd-badge]:                https://readthedocs.org/projects/fsspec-xrootd/badge/?version=latest
-[rtd-link]:                 https://coffeateam.github.io/fsspec-xrootd/latest/?badge=latest
+[rtd-link]:                 https://coffeateam.github.io/fsspec-xrootd/
 [sk-badge]:                 https://scikit-hep.org/assets/images/Scikit--HEP-Project-blue.svg
 <!-- prettier-ignore-end -->
