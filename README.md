@@ -17,8 +17,7 @@ tested with Linux at this time.
 
 ## Documentation
 
-Please refer to
-[RTD](https://coffeateam.github.io/fsspec-xrootd/)
+Please refer to [RTD](https://coffeateam.github.io/fsspec-xrootd/)
 
 [![Actions Status][actions-badge]][actions-link]
 [![Documentation Status][rtd-badge]][rtd-link]
