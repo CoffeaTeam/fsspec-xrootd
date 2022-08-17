@@ -18,7 +18,7 @@ tested with Linux at this time.
 ## Documentation
 
 Please refer to
-[RTD](https://fsspec-xrootd.readthedocs.io/en/latest/?badge=latest)
+[RTD](https://coffeateam.github.io/fsspec-xrootd/)
 
 [![Actions Status][actions-badge]][actions-link]
 [![Documentation Status][rtd-badge]][rtd-link]
@@ -46,6 +46,6 @@ Please refer to
 [pypi-platforms]:           https://img.shields.io/pypi/pyversions/fsspec-xrootd
 [pypi-version]:             https://badge.fury.io/py/fsspec-xrootd.svg
 [rtd-badge]:                https://readthedocs.org/projects/fsspec-xrootd/badge/?version=latest
-[rtd-link]:                 https://fsspec-xrootd.readthedocs.io/en/latest/?badge=latest
+[rtd-link]:                 https://coffeateam.github.io/fsspec-xrootd/latest/?badge=latest
 [sk-badge]:                 https://scikit-hep.org/assets/images/Scikit--HEP-Project-blue.svg
 <!-- prettier-ignore-end -->
