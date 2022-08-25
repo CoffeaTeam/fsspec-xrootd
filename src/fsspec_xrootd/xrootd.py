@@ -152,17 +152,27 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     def __init__(
         self,
-        *args: list[Any],
+        hostid: str,
         asynchronous: bool = False,
         loop: Any = None,
-        batch_size: int | None = None,
         **storage_options: Any,
     ) -> None:
+        """
+        Direct construction of XRootDFileSystem
+
+        Parameters
+        ----------
+        hostid: str
+            The hostname, optionally including port, username, or password in the
+            standard format (user:pass@host.name:port)
+        asynchronous: bool
+            If true, synchronous methods will not be available in this instance
+        loop:
+            Bring your own loop (for sync methods)
+        """
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
-        self._myclient = client.FileSystem(
-            XRootDFileSystem.protocol + "://" + storage_options["hostid"]
-        )
+        self._myclient = client.FileSystem("root://" + hostid)
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
 
@@ -177,18 +187,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     @staticmethod
     def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
-
         url = client.URL(u)
-
-        return {
-            "hostid": url.hostid,
-            "username": url.username,
-            "password": url.password,
-            "hostname": url.hostname,
-            "port": url.port,
-            "path": url.path,
-            "path_with_params": url.path_with_params,
-        }
+        # The hostid encapsulates user,pass,host,port in one string
+        return {"hostid": url.hostid}
 
     @classmethod
     def _strip_protocol(cls, path: str | list[str]) -> Any:
