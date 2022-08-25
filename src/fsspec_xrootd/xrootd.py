@@ -152,7 +152,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     def __init__(
         self,
-        hostid: str,
+        hostid: str = "",
         asynchronous: bool = False,
         loop: Any = None,
         **storage_options: Any,
@@ -173,6 +173,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self._myclient = client.FileSystem("root://" + hostid)
+        if not self._myclient.url.is_valid():
+            raise ValueError(f"Invalid hostid: '{hostid}'")
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
 
