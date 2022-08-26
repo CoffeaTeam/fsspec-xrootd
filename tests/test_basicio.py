@@ -60,17 +60,6 @@ def test_broken_server():
             _ = f.read()
 
 
-def test_pickle(localserver, clear_server):
-    import pickle
-
-    remoteurl, localpath = localserver
-
-    fs, _, (path,) = fsspec.get_fs_token_paths(remoteurl)
-    assert fs.ls(path) == []
-    fs = pickle.loads(pickle.dumps(fs))
-    assert fs.ls(path) == []
-
-
 def test_path_parsing():
     fs, _, (path,) = fsspec.get_fs_token_paths("root://server.com")
     assert fs.protocol == "root"
@@ -125,6 +114,18 @@ def test_read_fsspec(localserver, clear_server):
 
     fs, token, path = fsspec.get_fs_token_paths(remoteurl + "/testfile.txt", "rt")
     assert fs.read_block(path[0], 0, 4) == b"appl"
+
+
+def test_pickle(localserver, clear_server):
+    import pickle
+
+    remoteurl, localpath = localserver
+
+    fs, _, (path,) = fsspec.get_fs_token_paths(remoteurl)
+    print(path)
+    assert fs.ls(path) == []
+    fs = pickle.loads(pickle.dumps(fs))
+    assert fs.ls(path) == []
 
 
 def test_write_fsspec(localserver, clear_server):
