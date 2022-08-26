@@ -1,7 +1,8 @@
-"""
-Copyright (c) 2022 Scott Demarest. All rights reserved.
+"""fsspec-xrootd
 
-fsspec-xrootd: xrootd implementation for fsspec
+An xrootd implementation for fsspec.
+
+BSD 3-Clause License; see https://github.com/CoffeaTeam/fsspec-xrootd/blob/main/LICENSE
 """
 
 
