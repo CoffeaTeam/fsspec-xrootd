@@ -122,7 +122,6 @@ def test_pickle(localserver, clear_server):
     remoteurl, localpath = localserver
 
     fs, _, (path,) = fsspec.get_fs_token_paths(remoteurl)
-    print(path)
     assert fs.ls(path) == []
     fs = pickle.loads(pickle.dumps(fs))
     assert fs.ls(path) == []
