@@ -196,9 +196,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     @classmethod
     def _strip_protocol(cls, path: str | list[str]) -> Any:
         if type(path) == str:
-            return client.URL(path).path
+            return client.URL(path).path or cls.root_marker
         elif type(path) == list:
-            return [client.URL(item).path for item in path]
+            return [cls._strip_protocol(item) for item in path]
         else:
             raise ValueError("Strip protocol not given string or list")
 
