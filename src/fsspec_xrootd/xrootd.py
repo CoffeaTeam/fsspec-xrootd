@@ -295,7 +295,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     async def _info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         spath = os.path.split(path)
         deet = self._ls_from_cache(spath[0])
-        if deet is not None:
+        if deet is not None and len(deet) != 0:
             for item in deet:
                 if item["name"] == path:
                     return {

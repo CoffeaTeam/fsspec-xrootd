@@ -76,6 +76,18 @@ def test_path_parsing():
     assert paths == ["/blah", "/more"]
 
 
+def test_pickle(localserver, clear_server):
+    import pickle
+
+    remoteurl, localpath = localserver
+
+    fs, _, (path,) = fsspec.get_fs_token_paths(remoteurl)
+    assert fs.ls(path) == []
+    fs = pickle.loads(pickle.dumps(fs))
+    assert fs.ls(path) == []
+    time.sleep(1)
+
+
 def test_read_xrd(localserver, clear_server):
     remoteurl, localpath = localserver
     with open(localpath + "/testfile.txt", "w") as fout:
@@ -114,17 +126,6 @@ def test_read_fsspec(localserver, clear_server):
 
     fs, token, path = fsspec.get_fs_token_paths(remoteurl + "/testfile.txt", "rt")
     assert fs.read_block(path[0], 0, 4) == b"appl"
-
-
-def test_pickle(localserver, clear_server):
-    import pickle
-
-    remoteurl, localpath = localserver
-
-    fs, _, (path,) = fsspec.get_fs_token_paths(remoteurl)
-    assert fs.ls(path) == []
-    fs = pickle.loads(pickle.dumps(fs))
-    assert fs.ls(path) == []
 
 
 def test_write_fsspec(localserver, clear_server):
