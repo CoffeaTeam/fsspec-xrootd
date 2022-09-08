@@ -48,11 +48,44 @@ def test_ping(localserver, clear_server):
         raise OSError(f"Server did not run properly: {status.message}")
 
 
-def test_broken_server(localserver):
+def test_invalid_server():
+    with pytest.raises(ValueError):
+        fsspec.core.url_to_fs("root://")
+
+
+def test_broken_server():
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
         with fsspec.open("root://localhost:12345/", "rt", timeout=5) as f:
             _ = f.read()
+
+
+def test_path_parsing():
+    fs, _, (path,) = fsspec.get_fs_token_paths("root://server.com")
+    assert fs.protocol == "root"
+    assert path == "/"
+    fs, _, (path,) = fsspec.get_fs_token_paths("root://server.com/")
+    assert path == "/"
+    fs, _, (path,) = fsspec.get_fs_token_paths("root://server.com/blah")
+    assert path == "blah"
+    fs, _, (path,) = fsspec.get_fs_token_paths("root://server.com//blah")
+    assert path == "/blah"
+    fs, _, paths = fsspec.get_fs_token_paths(
+        ["root://server.com//blah", "root://server.com//more"]
+    )
+    assert paths == ["/blah", "/more"]
+
+
+def test_pickle(localserver, clear_server):
+    import pickle
+
+    remoteurl, localpath = localserver
+
+    fs, _, (path,) = fsspec.get_fs_token_paths(remoteurl)
+    assert fs.ls(path) == []
+    fs = pickle.loads(pickle.dumps(fs))
+    assert fs.ls(path) == []
+    time.sleep(1)
 
 
 def test_read_xrd(localserver, clear_server):

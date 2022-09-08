@@ -152,7 +152,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     def __init__(
         self,
-        hostid: str,
+        hostid: str = "",
         asynchronous: bool = False,
         loop: Any = None,
         **storage_options: Any,
@@ -173,6 +173,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self._myclient = client.FileSystem("root://" + hostid)
+        if not self._myclient.url.is_valid():
+            raise ValueError(f"Invalid hostid: '{hostid}'")
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
 
@@ -194,9 +196,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     @classmethod
     def _strip_protocol(cls, path: str | list[str]) -> Any:
         if type(path) == str:
-            return client.URL(path).path
+            return client.URL(path).path or cls.root_marker
         elif type(path) == list:
-            return [client.URL(item).path for item in path]
+            return [cls._strip_protocol(item) for item in path]
         else:
             raise ValueError("Strip protocol not given string or list")
 
@@ -293,7 +295,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     async def _info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         spath = os.path.split(path)
         deet = self._ls_from_cache(spath[0])
-        if deet is not None:
+        if deet is not None and len(deet) != 0:
             for item in deet:
                 if item["name"] == path:
                     return {
