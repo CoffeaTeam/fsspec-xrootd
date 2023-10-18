@@ -152,7 +152,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     def __init__(
         self,
-        hostid: str = "",
+        hostid: str,
         asynchronous: bool = False,
         loop: Any = None,
         **storage_options: Any,

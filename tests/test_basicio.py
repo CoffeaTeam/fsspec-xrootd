@@ -53,6 +53,11 @@ def test_invalid_server():
         fsspec.core.url_to_fs("root://")
 
 
+def test_invalid_parameters():
+    with pytest.raises(TypeError):
+        fsspec.filesystem(protocol="root")
+
+
 def test_broken_server():
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
