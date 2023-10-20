@@ -9,7 +9,11 @@ import time
 import fsspec
 import pytest
 
-from fsspec_xrootd.xrootd import XRootDFileSystem, _chunks_to_vectors, _vectors_to_chunks
+from fsspec_xrootd.xrootd import (
+    XRootDFileSystem,
+    _chunks_to_vectors,
+    _vectors_to_chunks,
+)
 
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
@@ -61,7 +65,7 @@ def test_invalid_parameters():
 def test_async_impl():
     cls = fsspec.get_filesystem_class(protocol="root")
     assert cls == XRootDFileSystem
-    assert cls.async_impl == True, "XRootDFileSystem should have async_impl=True"
+    assert cls.async_impl, "XRootDFileSystem should have async_impl=True"
 
 
 def test_broken_server():

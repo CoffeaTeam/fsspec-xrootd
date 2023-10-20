@@ -174,7 +174,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self._myclient = client.FileSystem("root://" + hostid)
         if not self._myclient.url.is_valid():
-            raise ValueError(f"Invalid hostid: '{hostid}'")
+            raise ValueError(f"Invalid hostid: {hostid!r}")
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
 
@@ -676,6 +676,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
                 " deprecated. "
                 "Specify it within the 'cache_options' argument instead.",
                 FutureWarning,
+                stacklevel=1,
             )
             cache_options["trim"] = kwargs.pop("trim")
 
