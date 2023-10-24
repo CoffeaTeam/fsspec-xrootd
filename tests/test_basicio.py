@@ -9,7 +9,11 @@ import time
 import fsspec
 import pytest
 
-from fsspec_xrootd.xrootd import _chunks_to_vectors, _vectors_to_chunks
+from fsspec_xrootd.xrootd import (
+    XRootDFileSystem,
+    _chunks_to_vectors,
+    _vectors_to_chunks,
+)
 
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
@@ -53,6 +57,17 @@ def test_invalid_server():
         fsspec.core.url_to_fs("root://")
 
 
+def test_invalid_parameters():
+    with pytest.raises(TypeError):
+        fsspec.filesystem(protocol="root")
+
+
+def test_async_impl():
+    cls = fsspec.get_filesystem_class(protocol="root")
+    assert cls == XRootDFileSystem
+    assert cls.async_impl, "XRootDFileSystem should have async_impl=True"
+
+
 def test_broken_server():
     with pytest.raises(OSError):
         # try to connect on the wrong port should fail
@@ -71,9 +86,14 @@ def test_path_parsing():
     fs, _, (path,) = fsspec.get_fs_token_paths("root://server.com//blah")
     assert path == "/blah"
     fs, _, paths = fsspec.get_fs_token_paths(
-        ["root://server.com//blah", "root://server.com//more"]
+        [
+            "root://server.com//blah",
+            "root://server.com//more",
+            "root://server.com/dir/",
+            "root://serv.er//dir/",
+        ]
     )
-    assert paths == ["/blah", "/more"]
+    assert paths == ["/blah", "/more", "dir", "/dir"]
 
 
 def test_pickle(localserver, clear_server):
