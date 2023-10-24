@@ -152,7 +152,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     def __init__(
         self,
-        hostid: str = "",
+        hostid: str,
         asynchronous: bool = False,
         loop: Any = None,
         **storage_options: Any,
@@ -174,7 +174,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self._myclient = client.FileSystem("root://" + hostid)
         if not self._myclient.url.is_valid():
-            raise ValueError(f"Invalid hostid: '{hostid}'")
+            raise ValueError(f"Invalid hostid: {hostid!r}")
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
 
@@ -196,7 +196,10 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     @classmethod
     def _strip_protocol(cls, path: str | list[str]) -> Any:
         if type(path) == str:
-            return client.URL(path).path or cls.root_marker
+            if path.startswith(cls.protocol):
+                return client.URL(path).path.rstrip("/") or cls.root_marker
+            # assume already stripped
+            return path.rstrip("/") or cls.root_marker
         elif type(path) == list:
             return [cls._strip_protocol(item) for item in path]
         else:
@@ -676,6 +679,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
                 " deprecated. "
                 "Specify it within the 'cache_options' argument instead.",
                 FutureWarning,
+                stacklevel=1,
             )
             cache_options["trim"] = kwargs.pop("trim")
 
