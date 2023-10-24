@@ -86,9 +86,14 @@ def test_path_parsing():
     fs, _, (path,) = fsspec.get_fs_token_paths("root://server.com//blah")
     assert path == "/blah"
     fs, _, paths = fsspec.get_fs_token_paths(
-        ["root://server.com//blah", "root://server.com//more"]
+        [
+            "root://server.com//blah",
+            "root://server.com//more",
+            "root://server.com/dir/",
+            "root://serv.er//dir/",
+        ]
     )
-    assert paths == ["/blah", "/more"]
+    assert paths == ["/blah", "/more", "dir", "/dir"]
 
 
 def test_pickle(localserver, clear_server):

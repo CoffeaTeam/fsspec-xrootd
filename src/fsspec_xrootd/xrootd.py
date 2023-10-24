@@ -197,9 +197,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     def _strip_protocol(cls, path: str | list[str]) -> Any:
         if type(path) == str:
             if path.startswith(cls.protocol):
-                return client.URL(path).path or cls.root_marker
+                return client.URL(path).path.rstrip("/") or cls.root_marker
             # assume already stripped
-            return path
+            return path.rstrip("/") or cls.root_marker
         elif type(path) == list:
             return [cls._strip_protocol(item) for item in path]
         else:
