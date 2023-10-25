@@ -12,7 +12,7 @@ on:
     types:
       - published
   schedule:
-    - cron:  "1 0 */7 * *"
+    - cron: "1 0 */7 * *"
 
 jobs:
   pre-commit:
