@@ -14,6 +14,10 @@ on:
   schedule:
     - cron: "1 0 */7 * *"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pre-commit:
     name: Format
