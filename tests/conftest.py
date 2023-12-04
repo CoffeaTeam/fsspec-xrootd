@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import time
+
 import pytest
 
 
@@ -13,9 +14,10 @@ def available_port():
     Get an available port on localhost.
     """
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         # Bind to port 0 to let the OS choose an available port
-        s.bind(('localhost', 0))
+        s.bind(("localhost", 0))
         # Get the selected port
         _, port = s.getsockname()
     return port
