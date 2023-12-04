@@ -65,6 +65,17 @@ jobs:
       - name: Test package
         run: python -m pytest -ra
 
+      - name: Run fsspec-xrootd tests from uproot latest release
+        run: |
+          python -m pip install uproot
+          UPROOT_VERSION=$(pip show uproot | grep Version | awk '{print $2}')
+          git clone https://github.com/scikit-hep/uproot5.git
+          git -C checkout tags/v${UPROOT_VERSION}
+          python -m pip install ./uproot5[test]
+          # Install xrootd-fsspec again because it may have been overwritten by uproot
+          python -m pip install .[test]
+          python -m pytest -ra -k "xrootd"
+
   dist:
     name: Distribution build
     runs-on: ubuntu-latest
