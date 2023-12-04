@@ -41,6 +41,9 @@ jobs:
       matrix:
         python-version: ["3.8", "3.9", "3.10", "3.11"]
         runs-on: [ubuntu-latest]
+    defaults:
+      run:
+        shell: bash -l {0}
 
     steps:
       - uses: actions/checkout@v4
@@ -55,14 +58,11 @@ jobs:
           channel-priority: true
           activate-environment: fsspec
       - name: Install build environment
-        shell: bash -l {0}
         run: |
           mamba install -c conda-forge "xrootd>=5.4.3"
       - name: Install package
-        shell: bash -l {0}
         run: python -m pip install .[test]
       - name: Test package
-        shell: bash -l {0}
         run: python -m pytest -ra
 
   dist:
