@@ -9,21 +9,24 @@ from enum import IntEnum
 from functools import partial
 from typing import Any, Callable, Iterable
 
-from fsspec.asyn import (  # type: ignore[import]
+from fsspec.asyn import (  # type: ignore[import-not-found]
     AsyncFileSystem,
     _run_coros_in_chunks,
     sync_wrapper,
 )
-from fsspec.spec import AbstractBufferedFile  # type: ignore[import]
-from XRootD import client  # type: ignore[import]
-from XRootD.client.flags import (  # type: ignore[import]
+from fsspec.spec import AbstractBufferedFile  # type: ignore[import-not-found]
+from XRootD import client  # type: ignore[import-not-found]
+from XRootD.client.flags import (  # type: ignore[import-not-found]
     DirListFlags,
     MkDirFlags,
     OpenFlags,
     QueryCode,
     StatInfoFlags,
 )
-from XRootD.client.responses import HostList, XRootDStatus  # type: ignore[import]
+from XRootD.client.responses import (  # type: ignore[import-not-found]
+    HostList,
+    XRootDStatus,
+)
 
 
 class ErrorCodes(IntEnum):
@@ -142,7 +145,6 @@ def _vectors_to_chunks(
 
 
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
-
     protocol = "root"
     root_marker = "/"
     default_timeout = 60
@@ -195,12 +197,12 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     @classmethod
     def _strip_protocol(cls, path: str | list[str]) -> Any:
-        if type(path) == str:
+        if isinstance(path, str):
             if path.startswith(cls.protocol):
                 return client.URL(path).path.rstrip("/") or cls.root_marker
             # assume already stripped
             return path.rstrip("/") or cls.root_marker
-        elif type(path) == list:
+        elif isinstance(path, list):
             return [cls._strip_protocol(item) for item in path]
         else:
             raise ValueError("Strip protocol not given string or list")
@@ -474,7 +476,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 coros, batch_size=batch_size, nofiles=True
             )
             result_bufs = []
-            for (status, buffers) in results:
+            for status, buffers in results:
                 if not status.ok:
                     raise OSError(
                         f"File did not vector_read properly: {status.message}"
@@ -498,7 +500,6 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         batch_size: int | None = None,
         **kwargs: Any,
     ) -> list[bytes]:
-
         # TODO: on_error
         if max_gap is not None:
             # use utils.merge_offset_ranges
@@ -546,7 +547,6 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         cache_options: dict[Any, Any] | None = None,
         **kwargs: Any,
     ) -> XRootDFile:
-
         return XRootDFile(
             self,
             path,
@@ -599,8 +599,10 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 **kwargs,
             )
             if compression is not None:
-                from fsspec.compression import compr  # type: ignore[import]
-                from fsspec.core import get_compression  # type: ignore[import]
+                from fsspec.compression import compr  # type: ignore[import-not-found]
+                from fsspec.core import (  # type: ignore[import-not-found]
+                    get_compression,
+                )
 
                 compression = get_compression(path, compression)
                 compress = compr[compression]
