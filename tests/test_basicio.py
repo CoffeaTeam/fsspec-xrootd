@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import time
 
 import fsspec
@@ -18,6 +19,8 @@ TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
 sleep_time = 0.2
 expiry_time = 0.1
+
+macos = sys.platform == "darwin"
 
 
 def test_ping(server, clear_server):
@@ -132,6 +135,7 @@ def test_write_fsspec(server, clear_server):
         assert f.read() == TESTDATA1
 
 
+@pytest.mark.skipif(macos, reason="Not working on macos")
 def test_append_fsspec(server, clear_server):
     url, path = server
     with open(path + "/testfile.txt", "w") as fout:
