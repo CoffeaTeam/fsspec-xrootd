@@ -11,6 +11,8 @@ on:
   release:
     types:
       - published
+  schedule:
+    - cron: "1 0 */7 * *"
 
 jobs:
   pre-commit:
@@ -37,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.7", "3.8", "3.9", "3.10"]
+        python-version: ["3.8", "3.9", "3.10", "3.11"]
         runs-on: [ubuntu-latest, macos-latest]
 
     steps:
@@ -83,7 +85,7 @@ jobs:
       - name: Check products
         run: pipx run twine check dist/*
 
-      - uses: pypa/gh-action-pypi-publish@v1.6.4
+      - uses: pypa/gh-action-pypi-publish@v1.8.10
         if: github.event_name == 'release' && github.event.action == 'published'
         with:
           user: __token__
