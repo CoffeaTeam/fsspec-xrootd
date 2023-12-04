@@ -69,12 +69,12 @@ jobs:
         run: |
           python -m pip install uproot
           UPROOT_VERSION=$(pip show uproot | grep Version | awk '{print $2}')
-          git clone https://github.com/scikit-hep/uproot5.git
-          git -C uproot5 checkout tags/v${UPROOT_VERSION}
-          python -m pip install ./uproot5[test]
+          git clone https://github.com/scikit-hep/uproot5.git uproot
+          git -C uproot checkout tags/v${UPROOT_VERSION}
+          python -m pip install ./uproot[test]
           # Install xrootd-fsspec again because it may have been overwritten by uproot
           python -m pip install .[test]
-          python -m pytest -ra -k "xrootd"
+          python -m pytest -ra -k "xrootd" uproot/tests
 
   dist:
     name: Distribution build
