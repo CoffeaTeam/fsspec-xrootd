@@ -19,7 +19,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: actions/setup-python@v3
@@ -41,9 +41,12 @@ jobs:
       matrix:
         python-version: ["3.8", "3.9", "3.10", "3.11"]
         runs-on: [ubuntu-latest]
+    defaults:
+      run:
+        shell: bash -l {0}
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Set up Conda
@@ -55,15 +58,23 @@ jobs:
           channel-priority: true
           activate-environment: fsspec
       - name: Install build environment
-        shell: bash -l {0}
         run: |
           mamba install -c conda-forge "xrootd>=5.4.3"
       - name: Install package
-        shell: bash -l {0}
         run: python -m pip install .[test]
       - name: Test package
-        shell: bash -l {0}
         run: python -m pytest -ra
+
+      - name: Run fsspec-xrootd tests from uproot latest release
+        run: |
+          python -m pip install uproot
+          UPROOT_VERSION=$(pip show uproot | grep Version | awk '{print $2}')
+          git clone https://github.com/scikit-hep/uproot5.git uproot
+          git -C uproot checkout tags/v${UPROOT_VERSION}
+          python -m pip install ./uproot[test]
+          # Install xrootd-fsspec again because it may have been overwritten by uproot
+          python -m pip install .[test]
+          python -m pytest -ra -k "xrootd" uproot/tests
 
   dist:
     name: Distribution build
@@ -71,7 +82,7 @@ jobs:
     needs: [pre-commit]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
