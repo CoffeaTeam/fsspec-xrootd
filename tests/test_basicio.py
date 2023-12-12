@@ -394,3 +394,21 @@ def test_vectors_to_chunks(localserver, clear_server):
         b"0" * 20,
         b"0" * 10,
     ]
+
+
+def test_glob_full_names(localserver, clear_server):
+    remoteurl, localpath = localserver
+    os.makedirs(localpath + "/WalkFolder")
+    with open(localpath + "/WalkFolder/testfile1.txt", "w") as fout:
+        fout.write(TESTDATA1)
+    with open(localpath + "/WalkFolder/testfile2.txt", "w") as fout:
+        fout.write(TESTDATA2)
+    time.sleep(sleep_time)
+
+    full_names = [
+        f.full_name for f in fsspec.open_files(remoteurl + "/WalkFolder/*.txt")
+    ]
+
+    for name in full_names:
+        with fsspec.open(name) as f:
+            assert f.read() in [bytes(data, "utf-8") for data in [TESTDATA1, TESTDATA2]]
