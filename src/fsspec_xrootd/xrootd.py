@@ -174,6 +174,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         """
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
+        self.hostid = hostid
         self._myclient = client.FileSystem("root://" + hostid)
         if not self._myclient.url.is_valid():
             raise ValueError(f"Invalid hostid: {hostid!r}")
@@ -206,6 +207,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             return [cls._strip_protocol(item) for item in path]
         else:
             raise ValueError("Strip protocol not given string or list")
+
+    def unstrip_protocol(self, name: str) -> str:
+        return f"{self.protocol}://{self.hostid}/{name}"
 
     async def _mkdir(
         self, path: str, create_parents: bool = True, **kwargs: Any
