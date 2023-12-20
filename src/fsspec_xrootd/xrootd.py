@@ -433,7 +433,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 while True:
                     # Read a chunk of content from the remote file
                     status, chunk = await _async_wrap(
-                        remote_file.read, start, start + chunk_size, self.timeout
+                        remote_file.read, start, chunk_size, self.timeout
                     )
                     start += chunk_size
 

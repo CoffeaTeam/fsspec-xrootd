@@ -416,13 +416,14 @@ def test_glob_full_names(localserver, clear_server):
 
 @pytest.mark.parametrize("protocol_prefix", ["", "simplecache::"])
 def test_cache(localserver, clear_server, protocol_prefix):
+    data = TESTDATA1 * 2000  # bigger than the chunk size
     remoteurl, localpath = localserver
     with open(localpath + "/testfile.txt", "w") as fout:
-        fout.write(TESTDATA1)
+        fout.write(data)
 
     with fsspec.open(protocol_prefix + remoteurl + "/testfile.txt", "rb") as f:
         contents = f.read()
-        assert contents == TESTDATA1.encode("utf-8")
+        assert contents == data.encode("utf-8")
 
 
 def test_cache_directory(localserver, clear_server, tmp_path):
