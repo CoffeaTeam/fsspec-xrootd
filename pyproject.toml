@@ -7,6 +7,13 @@ build-backend = "setuptools.build_meta"
 write_to = "src/fsspec_xrootd/_version.py"
 
 
+[project.optional-dependencies]
+test = [
+    "pytest-timeout",
+    "pytest-rerunfailures",
+]
+
+
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = ["-ra", "--showlocals", "--strict-markers", "--strict-config"]
@@ -43,12 +50,12 @@ profile = "black"
 
 [tool.pylint]
 master.py-version = "3.7"
-master.ignore-paths= ["src/fsspec_xrootd/_version.py"]
+master.ignore-paths = ["src/fsspec_xrootd/_version.py"]
 reports.output-format = "colorized"
 similarities.ignore-imports = "yes"
 messages_control.disable = [
-  "design",
-  "fixme",
-  "line-too-long",
-  "wrong-import-position",
+    "design",
+    "fixme",
+    "line-too-long",
+    "wrong-import-position",
 ]
