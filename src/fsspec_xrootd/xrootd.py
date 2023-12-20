@@ -416,17 +416,42 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self, rpath: str, lpath: str, chunk_size: int = 8192, **kwargs: Any
     ) -> None:
         # Open the remote file for reading
-        file = await self.open_async(rpath, mode="rb")
+        remote_file = client.File()
+
         try:
+            status, _n = await _async_wrap(
+                remote_file.open,
+                self.protocol + "://" + self.storage_options["hostid"] + "/" + rpath,
+                OpenFlags.READ,
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"Remote file failed to open: {status.message}")
+
             with open(lpath, "wb") as local_file:
+                start: int = 0
                 while True:
-                    chunk = await file.read(chunk_size)
+                    # Read a chunk of content from the remote file
+                    status, chunk = await _async_wrap(
+                        remote_file.read, start, start + chunk_size, self.timeout
+                    )
+                    start += chunk_size
+
+                    if not status.ok:
+                        raise OSError(f"Remote file failed to read: {status.message}")
+
+                    # Break if there is no more content
                     if not chunk:
                         break
+
+                    # Write the chunk to the local file
                     local_file.write(chunk)
+
         finally:
             # Close the remote file
-            await file.close()
+            status, _n = await _async_wrap(remote_file.close, self.timeout)
+
+        return None
 
     async def _get_max_chunk_info(self, file: Any) -> tuple[int, int]:
         """Queries the XRootD server for info required for pyxrootd vector_read() function.
