@@ -412,18 +412,18 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 self.timeout,
             )
 
-    async def _get_file(self, rpath: str, lpath: str, **kwargs: Any) -> None:
+    async def _get_file(
+        self, rpath: str, lpath: str, chunk_size: int = 8192, **kwargs: Any
+    ) -> None:
         # Open the remote file for reading
         file = await self.open_async(rpath, mode="rb")
-
         try:
-            # Read the content of the remote file
-            content = await file.read()
-
-            # Write the content to the local file
             with open(lpath, "wb") as local_file:
-                local_file.write(content)
-
+                while True:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    local_file.write(chunk)
         finally:
             # Close the remote file
             await file.close()
