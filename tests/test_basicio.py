@@ -412,3 +412,12 @@ def test_glob_full_names(localserver, clear_server):
     for name in full_names:
         with fsspec.open(name) as f:
             assert f.read() in [bytes(data, "utf-8") for data in [TESTDATA1, TESTDATA2]]
+
+
+def test_cache(localserver, clear_server):
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    with fsspec.open("simplecache::" + remoteurl + "/testfile.txt", "rb") as f:
+        assert f.readuntil(b"e") == b"apple"
