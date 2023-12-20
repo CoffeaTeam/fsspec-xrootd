@@ -414,10 +414,12 @@ def test_glob_full_names(localserver, clear_server):
             assert f.read() in [bytes(data, "utf-8") for data in [TESTDATA1, TESTDATA2]]
 
 
-def test_cache(localserver, clear_server):
+@pytest.mark.parametrize("protocol_prefix", ["", "simplecache::"])
+def test_cache(localserver, clear_server, protocol_prefix):
     remoteurl, localpath = localserver
     with open(localpath + "/testfile.txt", "w") as fout:
         fout.write(TESTDATA1)
 
-    with fsspec.open("simplecache::" + remoteurl + "/testfile.txt", "rb") as f:
-        assert f.readuntil(b"e") == b"apple"
+    with fsspec.open(protocol_prefix + remoteurl + "/testfile.txt", "rb") as f:
+        contents = f.read()
+        assert contents == TESTDATA1.encode("utf-8")
