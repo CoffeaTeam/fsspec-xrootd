@@ -259,7 +259,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     rmdir = sync_wrapper(_rmdir)
 
-    async def _rm_file(self, path: str) -> None:
+    async def _rm_file(self, path: str, **kwargs: Any) -> None:
         status, n = await _async_wrap(self._myclient.rm, path, self.timeout)
         if not status.ok:
             raise OSError(f"File not removed properly: {status.message}")
