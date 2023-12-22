@@ -416,7 +416,7 @@ def test_glob_full_names(localserver, clear_server):
 
 @pytest.mark.parametrize("protocol_prefix", ["", "simplecache::"])
 def test_cache(localserver, clear_server, protocol_prefix):
-    data = TESTDATA1 * 2000  # bigger than the chunk size
+    data = TESTDATA1 * int(1e7 / len(TESTDATA1))  # bigger than the chunk size
     remoteurl, localpath = localserver
     with open(localpath + "/testfile.txt", "w") as fout:
         fout.write(data)

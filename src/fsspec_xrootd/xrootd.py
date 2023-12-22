@@ -413,7 +413,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             )
 
     async def _get_file(
-        self, rpath: str, lpath: str, chunk_size: int = 8192, **kwargs: Any
+        self, rpath: str, lpath: str, chunk_size: int = 262_144, **kwargs: Any
     ) -> None:
         # Open the remote file for reading
         remote_file = client.File()
