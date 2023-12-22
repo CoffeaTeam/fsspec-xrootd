@@ -259,7 +259,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
     rmdir = sync_wrapper(_rmdir)
 
-    async def _rm_file(self, path: str) -> None:
+    async def _rm_file(self, path: str, **kwargs: Any) -> None:
         status, n = await _async_wrap(self._myclient.rm, path, self.timeout)
         if not status.ok:
             raise OSError(f"File not removed properly: {status.message}")
@@ -391,7 +391,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         try:
             status, _n = await _async_wrap(
                 _myFile.open,
-                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
+                self.unstrip_protocol(path),
                 OpenFlags.READ,
                 self.timeout,
             )
@@ -411,6 +411,45 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 _myFile.close,
                 self.timeout,
             )
+
+    async def _get_file(
+        self, rpath: str, lpath: str, chunk_size: int = 262_144, **kwargs: Any
+    ) -> None:
+        # Open the remote file for reading
+        remote_file = client.File()
+
+        try:
+            status, _n = await _async_wrap(
+                remote_file.open,
+                self.unstrip_protocol(rpath),
+                OpenFlags.READ,
+                self.timeout,
+            )
+            if not status.ok:
+                raise OSError(f"Remote file failed to open: {status.message}")
+
+            with open(lpath, "wb") as local_file:
+                start: int = 0
+                while True:
+                    # Read a chunk of content from the remote file
+                    status, chunk = await _async_wrap(
+                        remote_file.read, start, chunk_size, self.timeout
+                    )
+                    start += chunk_size
+
+                    if not status.ok:
+                        raise OSError(f"Remote file failed to read: {status.message}")
+
+                    # Break if there is no more content
+                    if not chunk:
+                        break
+
+                    # Write the chunk to the local file
+                    local_file.write(chunk)
+
+        finally:
+            # Close the remote file
+            await _async_wrap(remote_file.close, self.timeout)
 
     async def _get_max_chunk_info(self, file: Any) -> tuple[int, int]:
         """Queries the XRootD server for info required for pyxrootd vector_read() function.
