@@ -391,7 +391,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         try:
             status, _n = await _async_wrap(
                 _myFile.open,
-                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
+                self.unstrip_protocol(path),
                 OpenFlags.READ,
                 self.timeout,
             )
@@ -421,7 +421,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         try:
             status, _n = await _async_wrap(
                 remote_file.open,
-                self.protocol + "://" + self.storage_options["hostid"] + "/" + rpath,
+                self.unstrip_protocol(rpath),
                 OpenFlags.READ,
                 self.timeout,
             )
@@ -449,9 +449,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
 
         finally:
             # Close the remote file
-            status, _n = await _async_wrap(remote_file.close, self.timeout)
-
-        return None
+            await _async_wrap(remote_file.close, self.timeout)
 
     async def _get_max_chunk_info(self, file: Any) -> tuple[int, int]:
         """Queries the XRootD server for info required for pyxrootd vector_read() function.
