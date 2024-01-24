@@ -687,16 +687,25 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         if not isinstance(path, str):
             raise ValueError(f"Path expected to be string, path: {path}")
+        
+        self._hosts = self._locate_sources(path)
 
-        self._myFile = client.File()
-        status, _n = self._myFile.open(
-            fs.protocol + "://" + fs.storage_options["hostid"] + "/" + path,
-            self.mode,
-            timeout=self.timeout,
-        )
+        #Try hosts until you find an openable file
+        for i_host in range(len(self._hosts)):
+            self._myFile = client.File()
+            status, _n = self._myFile.open(
+                fs.protocol + "://" + self._hosts[i_host] + "/" + path,
+                self.mode,
+                timeout=self.timeout,
+            )
+            if status.ok:
+                break
 
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
+
+        #Move hosts that tried and failed to end of self_hosts
+        self._hosts = self._hosts[i_host:] + self._hosts[:i_host]
 
         self.metaOffset = 0
         if "a" in mode:
@@ -745,6 +754,36 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.forced = False
             self.location = None
             self.offset = 0
+
+    def _locate_sources(self, logical_filename: str) -> list[str]:
+        """Find hosts that have the desired file.
+        
+        Gets a list of hosts from the XRootD server that was provided when the
+        XRootDFile object was instantiated. Note that this implies it will only find
+        more hosts of the given file if self.fs is a redirector. Implementation of a
+        solution from the Pepper project in this issue:
+
+        (https://github.com/CoffeaTeam/fsspec-xrootd/issues/36).
+
+        Parameters
+        ----------
+        logical_filename: The logical filename of the file. (ex: "//store/mc/other/stuff/file.root")
+
+        Returns
+        -------
+        List of domain names that host the file
+        """
+        myclient = self.fs._myclient
+        # From Pepper:
+        # The flag PrefName (to get domain names instead of IP addresses) does
+        # not exist in the Python bidings. However, MAKEPATH has the same value
+        status, loc = myclient.locate(logical_filename, client.flags.OpenFlags.MAKEPATH)
+        if loc is None:
+            raise OSError("XRootD error: " + status.message)
+        hosts = [r.address for r in loc]
+        if len(hosts) == 0:
+            raise OSError(f"XRootD error: No hosts for file {logical_filename} found using XRootD server {self.fs.storage_options["hostid"]}")
+        return hosts
 
     def _fetch_range(self, start: int, end: int) -> Any:
         status, data = self._myFile.read(
