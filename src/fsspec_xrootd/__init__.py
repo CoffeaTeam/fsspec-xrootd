@@ -5,7 +5,6 @@ An xrootd implementation for fsspec.
 BSD 3-Clause License; see https://github.com/CoffeaTeam/fsspec-xrootd/blob/main/LICENSE
 """
 
-
 from __future__ import annotations
 
 from ._version import version as __version__
