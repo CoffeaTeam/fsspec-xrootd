@@ -1,4 +1,5 @@
 """Test basic IO against a xrootd server fixture"""
+
 from __future__ import annotations
 
 import os
