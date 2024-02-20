@@ -687,10 +687,12 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         if not isinstance(path, str):
             raise ValueError(f"Path expected to be string, path: {path}")
-        
+
+        self.fs = fs
+
         self._hosts = self._locate_sources(path)
 
-        #Try hosts until you find an openable file
+        # Try hosts until you find an openable file
         for i_host in range(len(self._hosts)):
             self._myFile = client.File()
             status, _n = self._myFile.open(
@@ -704,8 +706,9 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
 
-        #Move hosts that tried and failed to end of self_hosts
-        self._hosts = self._hosts[i_host:] + self._hosts[:i_host]
+        # Move hosts that tried and failed to self._dismissed_hosts
+        self._dismissed_hosts = self._hosts[:i_host]
+        self._hosts = self._hosts[i_host:]
 
         self.metaOffset = 0
         if "a" in mode:
@@ -713,7 +716,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self.metaOffset = _deets.size
 
         self.path = path
-        self.fs = fs
         self.mode = mode
         self.blocksize = (
             self.DEFAULT_BLOCK_SIZE if block_size in ["default", None] else block_size
@@ -757,7 +759,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
     def _locate_sources(self, logical_filename: str) -> list[str]:
         """Find hosts that have the desired file.
-        
+
         Gets a list of hosts from the XRootD server that was provided when the
         XRootDFile object was instantiated. Note that this implies it will only find
         more hosts of the given file if self.fs is a redirector. Implementation of a
@@ -776,13 +778,15 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         myclient = self.fs._myclient
         # From Pepper:
         # The flag PrefName (to get domain names instead of IP addresses) does
-        # not exist in the Python bidings. However, MAKEPATH has the same value
+        # not exist in the Python bindings. However, MAKEPATH has the same value
         status, loc = myclient.locate(logical_filename, client.flags.OpenFlags.MAKEPATH)
         if loc is None:
             raise OSError("XRootD error: " + status.message)
         hosts = [r.address for r in loc]
         if len(hosts) == 0:
-            raise OSError(f"XRootD error: No hosts for file {logical_filename} found using XRootD server {self.fs.storage_options["hostid"]}")
+            raise OSError(
+                f"XRootD error: No hosts for file {logical_filename} found using XRootD server {self.fs.storage_options['hostid']}"
+            )
         return hosts
 
     def _fetch_range(self, start: int, end: int) -> Any:
