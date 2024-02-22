@@ -690,7 +690,10 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         self.fs = fs
 
-        self._hosts = self._locate_sources(path)
+        if "r" in mode:
+            self._hosts = self._locate_sources(path)
+        else:
+            self._hosts = [fs.storage_options["hostid"]]
 
         # Try hosts until you find an openable file
         for i_host in range(len(self._hosts)):
