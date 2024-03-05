@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
 import time
 
@@ -16,19 +17,29 @@ from fsspec_xrootd.xrootd import (
     _vectors_to_chunks,
 )
 
+XROOTD_PORT = 1094
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
 sleep_time = 0.2
 expiry_time = 0.1
 
 
+def require_port_availability(port: int) -> bool:
+    """Raise an exception if the given port is already in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(("localhost", port)) == 0:
+            raise RuntimeError(f"This test requires port {port} to be available")
+
+
 @pytest.fixture(scope="module")
 def localserver(tmpdir_factory):
+    require_port_availability(XROOTD_PORT)
+
     srvdir = tmpdir_factory.mktemp("srv")
     tempPath = os.path.join(srvdir, "Folder")
     os.mkdir(tempPath)
     xrdexe = shutil.which("xrootd")
-    proc = subprocess.Popen([xrdexe, srvdir])
+    proc = subprocess.Popen([xrdexe, "-p", str(XROOTD_PORT), srvdir])
     time.sleep(2)  # give it some startup
     yield "root://localhost/" + str(tempPath), tempPath
     proc.terminate()
