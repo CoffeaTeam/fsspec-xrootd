@@ -3,13 +3,17 @@ from __future__ import annotations
 import asyncio
 import io
 import os.path
+import time
 import warnings
+import weakref
 from collections import defaultdict
 from enum import IntEnum
 from functools import partial
 from typing import Any, Callable, Iterable
 
 from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync_wrapper
+from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync, sync_wrapper
+from fsspec.exceptions import FSTimeoutError
 from fsspec.spec import AbstractBufferedFile
 from XRootD import client
 from XRootD.client.flags import (
@@ -139,6 +143,52 @@ def _vectors_to_chunks(
     return deets
 
 
+class ReadonlyFileHandleCache:
+    def __init__(self, loop: Any, timeout: int, max_items: int):
+        self._loop = loop
+        self._timeout = timeout
+        self._max_items = max_items
+        self._cache: dict[str, dict[str, Any]] = {}
+        weakref.finalize(self, self._close_all, loop, self._cache)
+
+    @staticmethod
+    def _close_all(loop: Any, cache: dict[str, dict[str, Any]]) -> None:
+        futures = (_async_wrap(item["handle"].close) for item in cache.values())
+        cache.clear()
+        if loop is not None and loop.is_running():
+            try:
+                sync(loop, asyncio.gather(*futures), timeout=0.5)
+            except (TimeoutError, FSTimeoutError, NotImplementedError):
+                pass
+        # TODO: any useful cleanup at this point?
+
+    async def open(self, url: str) -> Any:  # client.File
+        if url in self._cache:
+            item = self._cache[url]
+            item["accessed"] = time.monotonic()
+            return item["handle"]
+        handle = client.File()
+        status, _ = await _async_wrap(
+            handle.open,
+            url,
+            OpenFlags.READ,
+            self._timeout,
+        )
+        if not status.ok:
+            raise OSError(f"Failed to open file: {status.message}")
+        self._cache[url] = {"handle": handle, "accessed": time.monotonic()}
+        if self._max_items and len(self._cache) > self._max_items:
+            oldest_keys = sorted(
+                (item["accessed"], key) for key, item in self._cache.items()
+            )
+            futures = []
+            for _, key in oldest_keys[: -self._max_items]:
+                item = self._cache.pop(key)
+                futures.append(_async_wrap(item["handle"].close, self._timeout))
+            await asyncio.gather(*futures)
+        return handle
+
+
 class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     protocol = "root"
     root_marker = "/"
@@ -177,6 +227,11 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             raise ValueError(f"Invalid hostid: {hostid!r}")
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
+        self._filehandle_cache = ReadonlyFileHandleCache(
+            loop,
+            self.timeout,
+            max_items=storage_options.get("filehandle_cache_size", 256),
+        )
 
     def invalidate_cache(self, path: str | None = None) -> None:
         if path is None:
@@ -386,74 +441,45 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     async def _cat_file(
         self, path: str, start: int | None, end: int | None, **kwargs: Any
     ) -> Any:
-        _myFile = client.File()
-        try:
-            status, _n = await _async_wrap(
-                _myFile.open,
-                self.unstrip_protocol(path),
-                OpenFlags.READ,
-                self.timeout,
-            )
-            if not status.ok:
-                raise OSError(f"File failed to read: {status.message}")
+        _myFile = await self._filehandle_cache.open(self.unstrip_protocol(path))
+        n_bytes = end
+        if start is not None and end is not None:
+            n_bytes = end - start
 
-            n_bytes = end
-            if start is not None and end is not None:
-                n_bytes = end - start
-
-            status, data = await _async_wrap(
-                _myFile.read,
-                start or 0,
-                n_bytes or 0,
-                self.timeout,
-            )
-            if not status.ok:
-                raise OSError(f"Bytes failed to read from open file: {status.message}")
-            return data
-        finally:
-            status, _n = await _async_wrap(
-                _myFile.close,
-                self.timeout,
-            )
+        status, data = await _async_wrap(
+            _myFile.read,
+            start or 0,
+            n_bytes or 0,
+            self.timeout,
+        )
+        if not status.ok:
+            raise OSError(f"Bytes failed to read from open file: {status.message}")
+        return data
 
     async def _get_file(
         self, rpath: str, lpath: str, chunk_size: int = 262_144, **kwargs: Any
     ) -> None:
         # Open the remote file for reading
-        remote_file = client.File()
+        remote_file = await self._filehandle_cache.open(self.unstrip_protocol(rpath))
 
-        try:
-            status, _n = await _async_wrap(
-                remote_file.open,
-                self.unstrip_protocol(rpath),
-                OpenFlags.READ,
-                self.timeout,
-            )
-            if not status.ok:
-                raise OSError(f"Remote file failed to open: {status.message}")
+        with open(lpath, "wb") as local_file:
+            start: int = 0
+            while True:
+                # Read a chunk of content from the remote file
+                status, chunk = await _async_wrap(
+                    remote_file.read, start, chunk_size, self.timeout
+                )
+                start += chunk_size
 
-            with open(lpath, "wb") as local_file:
-                start: int = 0
-                while True:
-                    # Read a chunk of content from the remote file
-                    status, chunk = await _async_wrap(
-                        remote_file.read, start, chunk_size, self.timeout
-                    )
-                    start += chunk_size
+                if not status.ok:
+                    raise OSError(f"Remote file failed to read: {status.message}")
 
-                    if not status.ok:
-                        raise OSError(f"Remote file failed to read: {status.message}")
+                # Break if there is no more content
+                if not chunk:
+                    break
 
-                    # Break if there is no more content
-                    if not chunk:
-                        break
-
-                    # Write the chunk to the local file
-                    local_file.write(chunk)
-
-        finally:
-            # Close the remote file
-            await _async_wrap(remote_file.close, self.timeout)
+                # Write the chunk to the local file
+                local_file.write(chunk)
 
     @classmethod
     async def _get_max_chunk_info(cls, file: Any) -> tuple[int, int]:
@@ -515,39 +541,21 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         Tuple containing path name and a list of returned
         bytes in the same order as requested.
         """
-        try:
-            _myFile = client.File()
-            status, _n = await _async_wrap(
-                _myFile.open,
-                self.protocol + "://" + self.storage_options["hostid"] + "/" + path,
-                OpenFlags.READ,
-                self.timeout,
-            )
+        _myFile = await self._filehandle_cache.open(self.unstrip_protocol(path))
+
+        max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
+        vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
+
+        coros = [_async_wrap(_myFile.vector_read, v, self.timeout) for v in vectors]
+
+        results = await _run_coros_in_chunks(coros, batch_size=batch_size, nofiles=True)
+        result_bufs = []
+        for status, buffers in results:
             if not status.ok:
-                raise OSError(f"File did not open properly: {status.message}")
+                raise OSError(f"File did not vector_read properly: {status.message}")
+            result_bufs.append(buffers)
+        deets = _vectors_to_chunks(chunks, result_bufs)
 
-            max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
-            vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
-
-            coros = [_async_wrap(_myFile.vector_read, v, self.timeout) for v in vectors]
-
-            results = await _run_coros_in_chunks(
-                coros, batch_size=batch_size, nofiles=True
-            )
-            result_bufs = []
-            for status, buffers in results:
-                if not status.ok:
-                    raise OSError(
-                        f"File did not vector_read properly: {status.message}"
-                    )
-                result_bufs.append(buffers)
-            deets = _vectors_to_chunks(chunks, result_bufs)
-
-        finally:
-            status, _n = await _async_wrap(
-                _myFile.close,
-                self.timeout,
-            )
         return (path, deets)
 
     async def _cat_ranges(
