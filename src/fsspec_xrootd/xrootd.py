@@ -386,7 +386,9 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             else:
                 return [os.path.basename(item["name"].rstrip("/")) for item in listing]
 
-    async def _cat_file(self, path: str, start: int, end: int, **kwargs: Any) -> Any:
+    async def _cat_file(
+        self, path: str, start: int | None, end: int | None, **kwargs: Any
+    ) -> Any:
         _myFile = client.File()
         try:
             status, _n = await _async_wrap(
@@ -397,10 +399,15 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             )
             if not status.ok:
                 raise OSError(f"File failed to read: {status.message}")
+
+            n_bytes = end
+            if start is not None and end is not None:
+                n_bytes = end - start
+
             status, data = await _async_wrap(
                 _myFile.read,
-                start,
-                end - start,
+                start or 0,
+                n_bytes or 0,
                 self.timeout,
             )
             if not status.ok:
