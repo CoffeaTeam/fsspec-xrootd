@@ -153,14 +153,17 @@ class ReadonlyFileHandleCache:
 
     @staticmethod
     def _close_all(loop: Any, cache: dict[str, dict[str, Any]]) -> None:
-        futures = (_async_wrap(item["handle"].close) for item in cache.values())
-        cache.clear()
         if loop is not None and loop.is_running():
+            futures = (_async_wrap(item["handle"].close) for item in cache.values())
             try:
                 sync(loop, asyncio.gather(*futures), timeout=0.5)
             except (TimeoutError, FSTimeoutError, NotImplementedError):
                 pass
-        # TODO: any useful cleanup at this point?
+        else:
+            # fire and forget
+            for item in cache.values():
+                item["handle"].close(callback=lambda *args: None)
+        cache.clear()
 
     async def open(self, url: str) -> Any:  # client.File
         if url in self._cache:
