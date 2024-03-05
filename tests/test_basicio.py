@@ -158,6 +158,17 @@ def test_write_fsspec(localserver, clear_server):
         assert f.read() == TESTDATA1
 
 
+@pytest.mark.parametrize("start, end", [(None, None), (None, 10), (1, None), (1, 10)])
+def test_read_bytes_fsspec(localserver, clear_server, start, end):
+    remoteurl, localpath = localserver
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(TESTDATA1)
+
+    fs, _ = fsspec.core.url_to_fs(remoteurl)
+    data = fs.read_bytes(localpath + "/testfile.txt", start=start, end=end)
+    assert data == TESTDATA1.encode("utf-8")[start:end]
+
+
 def test_append_fsspec(localserver, clear_server):
     remoteurl, localpath = localserver
     with open(localpath + "/testfile.txt", "w") as fout:
