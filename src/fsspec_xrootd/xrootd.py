@@ -143,11 +143,12 @@ def _vectors_to_chunks(
 
 
 class ReadonlyFileHandleCache:
-    def __init__(self, loop: Any, max_items: int | None, ttl: int | None):
+    def __init__(self, loop: Any, max_items: int | None, ttl: int):
         self.loop = loop
         self._max_items = max_items
-        self._ttl = ttl
+        self._ttl = int(ttl)
         self._cache: dict[str, dict[str, Any]] = {}
+        sync(loop, self._start_pruner)
         weakref.finalize(self, self._close_all, loop, self._cache)
 
     @staticmethod
@@ -180,6 +181,14 @@ class ReadonlyFileHandleCache:
                 raise OSError(f"Failed to close file: {status.message}")
 
     close = sync_wrapper(_close)
+
+    async def _start_pruner(self) -> None:
+        self._prune_task = asyncio.create_task(self._pruner())
+
+    async def _pruner(self) -> None:
+        while True:
+            await self._prune_cache(self._ttl // 2)
+            await asyncio.sleep(self._ttl)
 
     async def _prune_cache(self, timeout: int) -> None:
         now = time.monotonic()
