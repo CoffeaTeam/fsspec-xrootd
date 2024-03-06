@@ -11,7 +11,6 @@ from enum import IntEnum
 from functools import partial
 from typing import Any, Callable, Iterable
 
-from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync_wrapper
 from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync, sync_wrapper
 from fsspec.exceptions import FSTimeoutError
 from fsspec.spec import AbstractBufferedFile
@@ -57,7 +56,7 @@ def _handle(
         future.get_loop().call_soon_threadsafe(future.set_exception, exc)
 
 
-async def _async_wrap(func: Callable[..., Any], *args: Any) -> Any:
+async def _async_wrap(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """Wraps pyxrootd functions to run asynchronously. Returns future to be awiated.
 
     Parameters
@@ -70,7 +69,7 @@ async def _async_wrap(func: Callable[..., Any], *args: Any) -> Any:
     An asyncio future. Result is set when _handle() is called back.
     """
     future = asyncio.get_running_loop().create_future()
-    submit_status = func(*args, callback=partial(_handle, future))
+    submit_status = func(*args, **kwargs, callback=partial(_handle, future))
     if not submit_status.ok:
         raise OSError(
             f"Failed to submit {func!r} request: {submit_status.message.strip()}"
@@ -144,9 +143,8 @@ def _vectors_to_chunks(
 
 
 class ReadonlyFileHandleCache:
-    def __init__(self, loop: Any, timeout: int, max_items: int):
-        self._loop = loop
-        self._timeout = timeout
+    def __init__(self, loop: Any, max_items: int):
+        self.loop = loop
         self._max_items = max_items
         self._cache: dict[str, dict[str, Any]] = {}
         weakref.finalize(self, self._close_all, loop, self._cache)
@@ -154,9 +152,14 @@ class ReadonlyFileHandleCache:
     @staticmethod
     def _close_all(loop: Any, cache: dict[str, dict[str, Any]]) -> None:
         if loop is not None and loop.is_running():
-            futures = (_async_wrap(item["handle"].close) for item in cache.values())
+
+            async def closure() -> None:
+                await asyncio.gather(
+                    *(_async_wrap(item["handle"].close) for item in cache.values())
+                )
+
             try:
-                sync(loop, asyncio.gather(*futures), timeout=0.5)
+                sync(loop, closure, timeout=0.5)
             except (TimeoutError, FSTimeoutError, NotImplementedError):
                 pass
         else:
@@ -165,7 +168,19 @@ class ReadonlyFileHandleCache:
                 item["handle"].close(callback=lambda *args: None)
         cache.clear()
 
-    async def open(self, url: str) -> Any:  # client.File
+    def close_all(self) -> None:
+        self._close_all(self.loop, self._cache)
+
+    async def _close(self, url: str, timeout: int) -> None:
+        item = self._cache.pop(url, None)
+        if item:
+            status, _ = await _async_wrap(item["handle"].close, timeout=timeout)
+            if not status.ok:
+                raise OSError(f"Failed to close file: {status.message}")
+
+    close = sync_wrapper(_close)
+
+    async def _open(self, url: str, timeout: int) -> Any:  # client.File
         if url in self._cache:
             item = self._cache[url]
             item["accessed"] = time.monotonic()
@@ -175,7 +190,7 @@ class ReadonlyFileHandleCache:
             handle.open,
             url,
             OpenFlags.READ,
-            self._timeout,
+            timeout=timeout,
         )
         if not status.ok:
             raise OSError(f"Failed to open file: {status.message}")
@@ -187,7 +202,7 @@ class ReadonlyFileHandleCache:
             futures = []
             for _, key in oldest_keys[: -self._max_items]:
                 item = self._cache.pop(key)
-                futures.append(_async_wrap(item["handle"].close, self._timeout))
+                futures.append(_async_wrap(item["handle"].close, timeout=timeout))
             await asyncio.gather(*futures)
         return handle
 
@@ -230,20 +245,23 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             raise ValueError(f"Invalid hostid: {hostid!r}")
         storage_options.setdefault("listing_expiry_time", 0)
         self.storage_options = storage_options
-        self._filehandle_cache = ReadonlyFileHandleCache(
-            loop,
-            self.timeout,
+        self._readonly_filehandle_cache = ReadonlyFileHandleCache(
+            self.loop,
             max_items=storage_options.get("filehandle_cache_size", 256),
         )
 
     def invalidate_cache(self, path: str | None = None) -> None:
         if path is None:
             self.dircache.clear()
+            self._readonly_filehandle_cache.close_all()
         else:
             try:
                 del self.dircache[path]
             except KeyError:
                 pass
+            self._readonly_filehandle_cache.close(
+                self.unstrip_protocol(path), self.timeout
+            )
 
     @staticmethod
     def _get_kwargs_from_urls(u: str) -> dict[Any, Any]:
@@ -264,7 +282,10 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             raise ValueError("Strip protocol not given string or list")
 
     def unstrip_protocol(self, name: str) -> str:
-        return f"{self.protocol}://{self.hostid}/{name}"
+        prefix = f"{self.protocol}://{self.hostid}/"
+        if name.startswith(prefix):
+            return name
+        return prefix + name
 
     async def _mkdir(
         self, path: str, create_parents: bool = True, **kwargs: Any
@@ -444,7 +465,10 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     async def _cat_file(
         self, path: str, start: int | None, end: int | None, **kwargs: Any
     ) -> Any:
-        _myFile = await self._filehandle_cache.open(self.unstrip_protocol(path))
+        _myFile = await self._readonly_filehandle_cache._open(
+            self.unstrip_protocol(path),
+            self.timeout,
+        )
         n_bytes = end
         if start is not None and end is not None:
             n_bytes = end - start
@@ -463,7 +487,10 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self, rpath: str, lpath: str, chunk_size: int = 262_144, **kwargs: Any
     ) -> None:
         # Open the remote file for reading
-        remote_file = await self._filehandle_cache.open(self.unstrip_protocol(rpath))
+        remote_file = await self._readonly_filehandle_cache._open(
+            self.unstrip_protocol(rpath),
+            self.timeout,
+        )
 
         with open(lpath, "wb") as local_file:
             start: int = 0
@@ -544,7 +571,10 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         Tuple containing path name and a list of returned
         bytes in the same order as requested.
         """
-        _myFile = await self._filehandle_cache.open(self.unstrip_protocol(path))
+        _myFile = await self._readonly_filehandle_cache._open(
+            self.unstrip_protocol(path),
+            self.timeout,
+        )
 
         max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
         vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
@@ -713,13 +743,14 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         if not isinstance(path, str):
             raise ValueError(f"Path expected to be string, path: {path}")
 
+        # Ensure any read-only handle is closed
+        fs.invalidate_cache(path)
         self._myFile = client.File()
-        status, _n = self._myFile.open(
+        status, _ = self._myFile.open(
             fs.unstrip_protocol(path),
             self.mode,
             timeout=self.timeout,
         )
-
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
 

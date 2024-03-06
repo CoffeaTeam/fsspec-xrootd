@@ -49,6 +49,10 @@ def localserver(tmpdir_factory):
 @pytest.fixture()
 def clear_server(localserver):
     remoteurl, localpath = localserver
+    fs, _, _ = fsspec.get_fs_token_paths(remoteurl)
+    # The open file handles on client side imply an open file handle on the server,
+    # so removing the directory doesn't actually work until the client closes its handles!
+    fs.invalidate_cache()
     shutil.rmtree(localpath)
     os.mkdir(localpath)
     yield
