@@ -143,9 +143,10 @@ def _vectors_to_chunks(
 
 
 class ReadonlyFileHandleCache:
-    def __init__(self, loop: Any, max_items: int):
+    def __init__(self, loop: Any, max_items: int | None, ttl: int | None):
         self.loop = loop
         self._max_items = max_items
+        self._ttl = ttl
         self._cache: dict[str, dict[str, Any]] = {}
         weakref.finalize(self, self._close_all, loop, self._cache)
 
@@ -180,6 +181,20 @@ class ReadonlyFileHandleCache:
 
     close = sync_wrapper(_close)
 
+    async def _prune_cache(self, timeout: int) -> None:
+        now = time.monotonic()
+        oldest_keys = sorted(
+            (item["accessed"], key) for key, item in self._cache.items()
+        )
+        to_close = []
+        if self._max_items:
+            to_close += oldest_keys[: -self._max_items]
+            oldest_keys = oldest_keys[-self._max_items :]
+        for last_access, key in oldest_keys:
+            if now - last_access > self._ttl:
+                to_close.append((last_access, key))
+        await asyncio.gather(*(self._close(key, timeout) for _, key in to_close))
+
     async def _open(self, url: str, timeout: int) -> Any:  # client.File
         if url in self._cache:
             item = self._cache[url]
@@ -195,15 +210,7 @@ class ReadonlyFileHandleCache:
         if not status.ok:
             raise OSError(f"Failed to open file: {status.message}")
         self._cache[url] = {"handle": handle, "accessed": time.monotonic()}
-        if self._max_items and len(self._cache) > self._max_items:
-            oldest_keys = sorted(
-                (item["accessed"], key) for key, item in self._cache.items()
-            )
-            futures = []
-            for _, key in oldest_keys[: -self._max_items]:
-                item = self._cache.pop(key)
-                futures.append(_async_wrap(item["handle"].close, timeout=timeout))
-            await asyncio.gather(*futures)
+        await self._prune_cache(timeout)
         return handle
 
 
@@ -248,6 +255,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self._readonly_filehandle_cache = ReadonlyFileHandleCache(
             self.loop,
             max_items=storage_options.get("filehandle_cache_size", 256),
+            ttl=storage_options.get("filehandle_cache_ttl", 30),
         )
 
     def invalidate_cache(self, path: str | None = None) -> None:
