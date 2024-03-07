@@ -7,9 +7,9 @@ import time
 import warnings
 import weakref
 from collections import defaultdict
+from dataclasses import dataclass
 from enum import IntEnum
-from functools import partial
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Coroutine, Iterable, TypeVar
 
 from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync, sync_wrapper
 from fsspec.exceptions import FSTimeoutError
@@ -29,52 +29,45 @@ class ErrorCodes(IntEnum):
     INVALID_PATH = 400
 
 
-def _handle(
-    future: asyncio.Future[tuple[XRootDStatus, Any]],
-    status: XRootDStatus,
-    content: Any,
-    servers: HostList,
-) -> None:
-    """Sets result of _async_wrap() future.
+T = TypeVar("T")
+# TODO: Protocol typing when kwargs is supported
+
+
+def _async_wrap(
+    func: Callable[..., XRootDStatus | tuple[XRootDStatus, T]]
+) -> Callable[..., Coroutine[Any, Any, tuple[XRootDStatus, T]]]:
+    """Wraps pyxrootd functions to run asynchronously. Returns an async callable
 
     Parameters
     ----------
-    future: asyncio future, created in _async_wrap()
-    status: XRootDStatus, pyxrootd response object
-    content: any, whatever was returned from pyxrootd function
-    servers: Hostlist, iterable list of host info (currently unused)
+    func: XRootD function that implements, needs to have a callback option
 
     Returns
     -------
-    Sets the future result.
+    A function with the same signature as func, but with an implicit `callback` argument
     """
-    if future.cancelled():
-        return
-    try:
-        future.get_loop().call_soon_threadsafe(future.set_result, (status, content))
-    except Exception as exc:
-        future.get_loop().call_soon_threadsafe(future.set_exception, exc)
+    future: asyncio.Future[tuple[XRootDStatus, T]] = (
+        asyncio.get_running_loop().create_future()
+    )
 
+    def callback(status: XRootDStatus, content: T, servers: HostList) -> None:
+        if future.cancelled():
+            return
+        loop = future.get_loop()
+        try:
+            loop.call_soon_threadsafe(future.set_result, (status, content))
+        except Exception as exc:
+            loop.call_soon_threadsafe(future.set_exception, exc)
 
-async def _async_wrap(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-    """Wraps pyxrootd functions to run asynchronously. Returns future to be awiated.
+    async def wrapped(*args: Any, **kwargs: Any) -> tuple[XRootDStatus, T]:
+        submit_status: XRootDStatus = func(*args, **kwargs, callback=callback)
+        if not submit_status.ok:
+            raise OSError(
+                f"Failed to submit {func!r} request: {submit_status.message.strip()}"
+            )
+        return await future
 
-    Parameters
-    ----------
-    func: pyxrootd function, needs to have a callback option
-    args: non-keyworded arguments for pyxrootd function
-
-    Returns
-    -------
-    An asyncio future. Result is set when _handle() is called back.
-    """
-    future = asyncio.get_running_loop().create_future()
-    submit_status = func(*args, **kwargs, callback=partial(_handle, future))
-    if not submit_status.ok:
-        raise OSError(
-            f"Failed to submit {func!r} request: {submit_status.message.strip()}"
-        )
-    return await future
+    return wrapped
 
 
 def _chunks_to_vectors(
@@ -142,22 +135,28 @@ def _vectors_to_chunks(
     return deets
 
 
+@dataclass
+class _CacheItem:
+    accessed: float
+    handle: client.File
+
+
 class ReadonlyFileHandleCache:
     def __init__(self, loop: Any, max_items: int | None, ttl: int):
         self.loop = loop
         self._max_items = max_items
         self._ttl = int(ttl)
-        self._cache: dict[str, dict[str, Any]] = {}
+        self._cache: dict[str, _CacheItem] = {}
         sync(loop, self._start_pruner)
         weakref.finalize(self, self._close_all, loop, self._cache)
 
     @staticmethod
-    def _close_all(loop: Any, cache: dict[str, dict[str, Any]]) -> None:
+    def _close_all(loop: Any, cache: dict[str, _CacheItem]) -> None:
         if loop is not None and loop.is_running():
 
             async def closure() -> None:
                 await asyncio.gather(
-                    *(_async_wrap(item["handle"].close) for item in cache.values())
+                    *(_async_wrap(item.handle.close)() for item in cache.values())
                 )
 
             try:
@@ -167,7 +166,7 @@ class ReadonlyFileHandleCache:
         else:
             # fire and forget
             for item in cache.values():
-                item["handle"].close(callback=lambda *args: None)
+                item.handle.close(callback=lambda *args: None)
         cache.clear()
 
     def close_all(self) -> None:
@@ -176,7 +175,7 @@ class ReadonlyFileHandleCache:
     async def _close(self, url: str, timeout: int) -> None:
         item = self._cache.pop(url, None)
         if item:
-            status, _ = await _async_wrap(item["handle"].close, timeout=timeout)
+            status, _ = await _async_wrap(item.handle.close)(timeout=timeout)
             if not status.ok:
                 raise OSError(f"Failed to close file: {status.message}")
 
@@ -192,9 +191,7 @@ class ReadonlyFileHandleCache:
 
     async def _prune_cache(self, timeout: int) -> None:
         now = time.monotonic()
-        oldest_keys = sorted(
-            (item["accessed"], key) for key, item in self._cache.items()
-        )
+        oldest_keys = sorted((item.accessed, key) for key, item in self._cache.items())
         to_close = []
         if self._max_items:
             to_close += oldest_keys[: -self._max_items]
@@ -207,18 +204,17 @@ class ReadonlyFileHandleCache:
     async def _open(self, url: str, timeout: int) -> Any:  # client.File
         if url in self._cache:
             item = self._cache[url]
-            item["accessed"] = time.monotonic()
-            return item["handle"]
+            item.accessed = time.monotonic()
+            return item.handle
         handle = client.File()
-        status, _ = await _async_wrap(
-            handle.open,
+        status, _ = await _async_wrap(handle.open)(
             url,
             OpenFlags.READ,
             timeout=timeout,
         )
         if not status.ok:
             raise OSError(f"Failed to open file: {status.message}")
-        self._cache[url] = {"handle": handle, "accessed": time.monotonic()}
+        self._cache[url] = _CacheItem(accessed=time.monotonic(), handle=handle)
         await self._prune_cache(timeout)
         return handle
 
@@ -237,7 +233,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self,
         hostid: str,
         asynchronous: bool = False,
-        loop: Any = None,
+        loop: asyncio.AbstractEventLoop | None = None,
         **storage_options: Any,
     ) -> None:
         """
@@ -308,11 +304,13 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         self, path: str, create_parents: bool = True, **kwargs: Any
     ) -> None:
         if create_parents:
-            status, n = await _async_wrap(
-                self._myclient.mkdir, path, MkDirFlags.MAKEPATH, self.timeout
+            status, _ = await _async_wrap(self._myclient.mkdir)(
+                path, flags=MkDirFlags.MAKEPATH, timeout=self.timeout
             )
         else:
-            status, n = await _async_wrap(self._myclient.mkdir, path, self.timeout)
+            status, _ = await _async_wrap(self._myclient.mkdir)(
+                path, timeout=self.timeout
+            )
         if not status.ok:
             raise OSError(f"Directory not made properly: {status.message}")
 
@@ -322,8 +320,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                 raise OSError(
                     "Location already exists and exist_ok arg was set to false"
                 )
-        status, n = await _async_wrap(
-            self._myclient.mkdir, path, MkDirFlags.MAKEPATH, self.timeout
+        status, _ = await _async_wrap(self._myclient.mkdir)(
+            path, MkDirFlags.MAKEPATH, timeout=self.timeout
         )
         if not status.ok and not (status.code == ErrorCodes.INVALID_PATH and exist_ok):
             raise OSError(f"Directory not made properly: {status.message}")
@@ -346,31 +344,30 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         )
 
     async def _rmdir(self, path: str) -> None:
-        status, n = await _async_wrap(self._myclient.rmdir, path, self.timeout)
+        status, _ = await _async_wrap(self._myclient.rmdir)(path, self.timeout)
         if not status.ok:
             raise OSError(f"Directory not removed properly: {status.message}")
 
     rmdir = sync_wrapper(_rmdir)
 
     async def _rm_file(self, path: str, **kwargs: Any) -> None:
-        status, n = await _async_wrap(self._myclient.rm, path, self.timeout)
+        status, _ = await _async_wrap(self._myclient.rm)(path, self.timeout)
         if not status.ok:
             raise OSError(f"File not removed properly: {status.message}")
 
     async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
         if truncate or not await self._exists(path):
-            status, _ = await _async_wrap(
-                self._myclient.truncate, path, 0, self.timeout
+            status, _ = await _async_wrap(self._myclient.truncate)(
+                path, size=0, timeout=self.timeout
             )
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
         else:
             len = await self._info(path)
-            status, _ = await _async_wrap(
-                self._myclient.truncate,
+            status, _ = await _async_wrap(self._myclient.truncate)(
                 path,
-                len.get("size"),
-                self.timeout,
+                size=len.get("size"),
+                timeout=self.timeout,
             )
             if not status.ok:
                 raise OSError(f"File not touched properly: {status.message}")
@@ -378,7 +375,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     touch = sync_wrapper(_touch)
 
     async def _modified(self, path: str) -> Any:
-        status, statInfo = await _async_wrap(self._myclient.stat, path, self.timeout)
+        status, statInfo = await _async_wrap(self._myclient.stat)(path, self.timeout)  # type: ignore[var-annotated]
         return statInfo.modtime
 
     modified = sync_wrapper(_modified)
@@ -387,7 +384,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         if path in self.dircache:
             return True
         else:
-            status, _ = await _async_wrap(self._myclient.stat, path, self.timeout)
+            status, _ = await _async_wrap(self._myclient.stat)(path, self.timeout)
             if status.code == ErrorCodes.INVALID_PATH:
                 return False
             elif not status.ok:
@@ -407,7 +404,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     }
             raise OSError("_ls_from_cache() failed to function")
         else:
-            status, deet = await _async_wrap(self._myclient.stat, path, self.timeout)
+            status, deet = await _async_wrap(self._myclient.stat)(path, self.timeout)
             if not status.ok:
                 raise OSError(f"File stat request failed: {status.message}")
             if deet.flags & StatInfoFlags.IS_DIR:
@@ -441,8 +438,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     os.path.basename(item["name"]) for item in self._ls_from_cache(path)
                 ]
         else:
-            status, deets = await _async_wrap(
-                self._myclient.dirlist, path, DirListFlags.STAT, self.timeout
+            status, deets = await _async_wrap(self._myclient.dirlist)(  # type: ignore[var-annotated]
+                path, DirListFlags.STAT, self.timeout
             )
             if not status.ok:
                 raise OSError(
@@ -490,8 +487,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         if start is not None and end is not None:
             n_bytes = end - start
 
-        status, data = await _async_wrap(
-            _myFile.read,
+        status, data = await _async_wrap(_myFile.read)(  # type: ignore[var-annotated]
             start or 0,
             n_bytes or 0,
             self.timeout,
@@ -513,8 +509,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             start: int = 0
             while True:
                 # Read a chunk of content from the remote file
-                status, chunk = await _async_wrap(
-                    remote_file.read, start, chunk_size, self.timeout
+                status, chunk = await _async_wrap(remote_file.read)(  # type: ignore[var-annotated]
+                    start, chunk_size, self.timeout
                 )
                 start += chunk_size
 
@@ -549,8 +545,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         data_server = f"{data_server.protocol}://{data_server.hostid}/"
         if data_server not in cls._dataserver_info_cache:
             fs = client.FileSystem(data_server)
-            status, result = await _async_wrap(
-                fs.query, QueryCode.CONFIG, "readv_iov_max readv_ior_max"
+            status, result = await _async_wrap(fs.query)(  # type: ignore[var-annotated]
+                QueryCode.CONFIG, "readv_iov_max readv_ior_max"
             )
             if not status.ok:
                 raise OSError(
@@ -596,7 +592,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         max_num_chunks, max_chunk_size = await self._get_max_chunk_info(_myFile)
         vectors = _chunks_to_vectors(chunks, max_num_chunks, max_chunk_size)
 
-        coros = [_async_wrap(_myFile.vector_read, v, self.timeout) for v in vectors]
+        coros = [_async_wrap(_myFile.vector_read)(v, self.timeout) for v in vectors]  # type: ignore[var-annotated]
 
         results = await _run_coros_in_chunks(coros, batch_size=batch_size, nofiles=True)
         result_bufs = []
