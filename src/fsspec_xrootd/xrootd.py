@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import os.path
 import warnings
 from collections import defaultdict
@@ -824,9 +825,9 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
                 len(self.fs.valid_sources) == 0
             ):
                 hosts.append(clean_address)
-                print(f"Added host {clean_address} to _hosts")
+                logging.debug(f"Added host {clean_address} to _hosts")
             else:
-                print(
+                logging.debug(
                     f"Host {clean_address} not in valid_sources {self.fs.valid_sources}"
                 )
         if len(hosts) == 0:
