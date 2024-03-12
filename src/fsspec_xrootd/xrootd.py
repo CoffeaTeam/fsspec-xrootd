@@ -816,13 +816,17 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         hosts = []
         for r in loc:
             if len(r.address.split(":")) > 1:
-                clean_address = r.address.split(":")[:-1]
+                #Strip off the port number if necessary
+                clean_address = ''.join(r.address.split(":")[:-1])
             else:
                 clean_address = r.address
             if (clean_address in self.fs.valid_sources) or (
                 len(self.fs.valid_sources) == 0
             ):
                 hosts.append(clean_address)
+                print(f"Added host {clean_address} to _hosts")
+            else:
+                print(f"Host {clean_address} not in valid_sources {self.fs.valid_sources}")
         if len(hosts) == 0:
             err_msg = f"XRootD error: No hosts for file {logical_filename} found using XRootD server {self.fs.storage_options['hostid']}"
             if len(self.fs.valid_sources) > 0:
