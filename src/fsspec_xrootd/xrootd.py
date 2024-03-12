@@ -168,10 +168,21 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             If true, synchronous methods will not be available in this instance
         loop:
             Bring your own loop (for sync methods)
+        storage_options:
+            Options for the XRootD file system object. Includes (not limited to):
+            - locate_all_sources = True: bool
+                - Defaults to True. Finds all locations at which the file is hosted, and chooses
+                  from those. Does not let the redirector pick the first to respond.
+            - valid_sources = []: list
+                - If given and locate_all_sources is True, fsspec will only reject any file host
+                  not in this list. Entries should be of the form ie: `cmsxrootd-site1.fnal.gov`
+                  (no port number)
         """
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self.hostid = hostid
+        self.locate_all_sources = storage_options.get("locate_all_sources", True)
+        self.valid_sources = storage_options.get("valid_sources", [])
         self._myclient = client.FileSystem("root://" + hostid)
         if not self._myclient.url.is_valid():
             raise ValueError(f"Invalid hostid: {hostid!r}")
@@ -704,16 +715,16 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         self.fs = fs
 
-        if "r" in mode:
+        if "r" in mode and self.fs.locate_all_sources:
             self._hosts = self._locate_sources(path)
         else:
             self._hosts = [fs.storage_options["hostid"]]
 
         # Try hosts until you find an openable file
-        for i_host in range(len(self._hosts)):
+        for _i_host in range(len(self._hosts)):
             self._myFile = client.File()
             status, _n = self._myFile.open(
-                fs.unstrip_protocl(path),
+                fs.unstrip_protocol(path),
                 self.mode,
                 timeout=self.timeout,
             )
@@ -724,8 +735,8 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise OSError(f"File did not open properly: {status.message}")
 
         # Move hosts that tried and failed to self._dismissed_hosts
-        self._dismissed_hosts = self._hosts[:i_host]
-        self._hosts = self._hosts[i_host:]
+        self._dismissed_hosts = self._hosts[:_i_host]
+        self._hosts = self._hosts[_i_host:]
 
         self.metaOffset = 0
         if "a" in mode:
@@ -784,6 +795,9 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         (https://github.com/CoffeaTeam/fsspec-xrootd/issues/36).
 
+        If valid_sources is a non-empty list in fs.storage_options, will only return domain names
+        that are also in valid_sources
+
         Parameters
         ----------
         logical_filename: The logical filename of the file. (ex: "//store/mc/other/stuff/file.root")
@@ -799,11 +813,23 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         status, loc = myclient.locate(logical_filename, client.flags.OpenFlags.MAKEPATH)
         if loc is None:
             raise OSError("XRootD error: " + status.message)
-        hosts = [r.address for r in loc]
+        hosts = []
+        for r in loc:
+            if len(r.address.split(":")) > 1:
+                clean_address = r.address.split(":")[:-1]
+            else:
+                clean_address = r.address
+            if (clean_address in self.fs.valid_sources) or (
+                len(self.fs.valid_sources) == 0
+            ):
+                hosts.append(clean_address)
         if len(hosts) == 0:
-            raise OSError(
-                f"XRootD error: No hosts for file {logical_filename} found using XRootD server {self.fs.storage_options['hostid']}"
-            )
+            err_msg = f"XRootD error: No hosts for file {logical_filename} found using XRootD server {self.fs.storage_options['hostid']}"
+            if len(self.fs.valid_sources) > 0:
+                vld_src_msg = f" and valid sources {self.fs.valid_sources}"
+                raise OSError(err_msg + vld_src_msg)
+            else:
+                raise OSError(err_msg)
         return hosts
 
     def _fetch_range(self, start: int, end: int) -> Any:
