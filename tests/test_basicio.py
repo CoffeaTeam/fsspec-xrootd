@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
+import socket
 import subprocess
 import time
 
@@ -16,19 +18,29 @@ from fsspec_xrootd.xrootd import (
     _vectors_to_chunks,
 )
 
+XROOTD_PORT = 1094
 TESTDATA1 = "apple\nbanana\norange\ngrape"
 TESTDATA2 = "red\ngreen\nyellow\nblue"
 sleep_time = 0.2
 expiry_time = 0.1
 
 
+def require_port_availability(port: int) -> bool:
+    """Raise an exception if the given port is already in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(("localhost", port)) == 0:
+            raise RuntimeError(f"This test requires port {port} to be available")
+
+
 @pytest.fixture(scope="module")
 def localserver(tmpdir_factory):
+    require_port_availability(XROOTD_PORT)
+
     srvdir = tmpdir_factory.mktemp("srv")
     tempPath = os.path.join(srvdir, "Folder")
     os.mkdir(tempPath)
     xrdexe = shutil.which("xrootd")
-    proc = subprocess.Popen([xrdexe, srvdir])
+    proc = subprocess.Popen([xrdexe, "-p", str(XROOTD_PORT), srvdir])
     time.sleep(2)  # give it some startup
     yield "root://localhost/" + str(tempPath), tempPath
     proc.terminate()
@@ -38,6 +50,10 @@ def localserver(tmpdir_factory):
 @pytest.fixture()
 def clear_server(localserver):
     remoteurl, localpath = localserver
+    fs, _, _ = fsspec.get_fs_token_paths(remoteurl)
+    # The open file handles on client side imply an open file handle on the server,
+    # so removing the directory doesn't actually work until the client closes its handles!
+    fs.invalidate_cache()
     shutil.rmtree(localpath)
     os.mkdir(localpath)
     yield
@@ -456,3 +472,34 @@ def test_cache_directory(localserver, clear_server, tmp_path):
     with open(cache_directory / os.listdir(cache_directory)[0], "rb") as f:
         contents = f.read()
         assert contents == TESTDATA1.encode("utf-8")
+
+
+def test_close_while_reading(localserver, clear_server):
+    remoteurl, localpath = localserver
+    data = TESTDATA1 * int(1e8 / len(TESTDATA1))
+    with open(localpath + "/testfile.txt", "w") as fout:
+        fout.write(data)
+
+    fs, _, (path,) = fsspec.get_fs_token_paths(remoteurl + "/testfile.txt")
+
+    async def reader():
+        tic = time.monotonic()
+        await fs._cat_file(path, start=0, end=None)
+        toc = time.monotonic()
+        return tic, toc
+
+    async def closer():
+        await asyncio.sleep(0.001)
+        tic = time.monotonic()
+        await fs._readonly_filehandle_cache._close(path, 1)
+        toc = time.monotonic()
+        return tic, toc
+
+    async def run():
+        (read_start, read_stop), (close_start, close_stop) = await asyncio.gather(
+            reader(), closer()
+        )
+        assert read_start < close_start < read_stop
+        assert read_start < close_stop < read_stop
+
+    asyncio.run(run())
