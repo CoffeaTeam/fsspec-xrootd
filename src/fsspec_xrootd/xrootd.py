@@ -155,6 +155,8 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
         hostid: str,
         asynchronous: bool = False,
         loop: Any = None,
+        locate_all_sources: bool = True,
+        valid_sources: list[str] | None = None,
         **storage_options: Any,
     ) -> None:
         """
@@ -169,21 +171,23 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             If true, synchronous methods will not be available in this instance
         loop:
             Bring your own loop (for sync methods)
-        storage_options:
-            Options for the XRootD file system object. Includes (not limited to):
-            - locate_all_sources = True: bool
-                - Defaults to True. Finds all locations at which the file is hosted, and chooses
-                  from those. Does not let the redirector pick the first to respond.
-            - valid_sources = []: list
-                - If given and locate_all_sources is True, fsspec will only reject any file host
-                  not in this list. Entries should be of the form ie: `cmsxrootd-site1.fnal.gov`
-                  (no port number)
+        locate_all_sources = True: bool
+            Only active for reading (does nothing for writing). Defaults to True.
+            Finds all locations at which the file is hosted, and chooses from those. Does
+            not let the redirector pick the first to respond.
+        valid_sources = None: list
+            If given and locate_all_sources is True, fsspec will only reject any file host
+            not in this list. Entries should be of the form ie: `cmsxrootd-site1.fnal.gov`
+            (no port number)
         """
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.timeout = storage_options.get("timeout", XRootDFileSystem.default_timeout)
         self.hostid = hostid
-        self.locate_all_sources = storage_options.get("locate_all_sources", True)
-        self.valid_sources = storage_options.get("valid_sources", [])
+        self.locate_all_sources = locate_all_sources
+        if valid_sources:
+            self.valid_sources = valid_sources
+        else:
+            self.valid_sources = []
         self._myclient = client.FileSystem("root://" + hostid)
         if not self._myclient.url.is_valid():
             raise ValueError(f"Invalid hostid: {hostid!r}")
@@ -722,10 +726,10 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             self._hosts = [fs.storage_options["hostid"]]
 
         # Try hosts until you find an openable file
-        for _i_host in range(len(self._hosts)):
+        for i_host in range(len(self._hosts)):
             self._myFile = client.File()
             status, _n = self._myFile.open(
-                fs.unstrip_protocol(path),
+                fs.protocol + "://" + self._hosts[i_host] + "/" + path,
                 self.mode,
                 timeout=self.timeout,
             )
@@ -736,8 +740,8 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise OSError(f"File did not open properly: {status.message}")
 
         # Move hosts that tried and failed to self._dismissed_hosts
-        self._dismissed_hosts = self._hosts[:_i_host]
-        self._hosts = self._hosts[_i_host:]
+        self._dismissed_hosts = self._hosts[:i_host]
+        self._hosts = self._hosts[i_host:]
 
         self.metaOffset = 0
         if "a" in mode:
