@@ -776,28 +776,32 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
         # Ensure any read-only handle is closed
         fs.invalidate_cache(path)
 
-        if "r" in mode and self.fs.locate_all_sources:
+        # Try opening with given pathname before trying to locate all sources (if requested)
+        self._myFile = client.File()
+        status, _n = self._myFile.open(
+            fs.unstrip_protocol(path),
+            self.mode,
+            timeout=self.timeout,
+        )
+        if not status.ok and "r" in mode and self.fs.locate_all_sources:
             self._hosts = self._locate_sources(path)
-        else:
-            self._hosts = [fs.storage_options["hostid"]]
-
-        # Try hosts until you find an openable file
-        for i_host in range(len(self._hosts)):
-            self._myFile = client.File()
-            status, _n = self._myFile.open(
-                fs.protocol + "://" + self._hosts[i_host] + "/" + path,
-                self.mode,
-                timeout=self.timeout,
-            )
-            if status.ok:
-                break
-
+            # Try hosts until you find an openable file
+            for i_host in range(len(self._hosts)):
+                self._myFile = client.File()
+                status, _n = self._myFile.open(
+                    fs.protocol + "://" + self._hosts[i_host] + "/" + path,
+                    self.mode,
+                    timeout=self.timeout,
+                )
+                if status.ok:
+                    # Move hosts that tried and failed to self._dismissed_hosts
+                    self._dismissed_hosts = self._hosts[:i_host]
+                    self._hosts = self._hosts[i_host:]
+                    break
+        # If above loop cannot find source OR locate_all_sources is off and we
+        # could not read file initially, end up here
         if not status.ok:
             raise OSError(f"File did not open properly: {status.message}")
-
-        # Move hosts that tried and failed to self._dismissed_hosts
-        self._dismissed_hosts = self._hosts[:i_host]
-        self._hosts = self._hosts[i_host:]
 
         self.metaOffset = 0
         if "a" in mode:
