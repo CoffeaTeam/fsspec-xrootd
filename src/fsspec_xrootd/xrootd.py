@@ -35,7 +35,7 @@ T = TypeVar("T")
 
 
 def _async_wrap(
-    func: Callable[..., XRootDStatus | tuple[XRootDStatus, T]]
+    func: Callable[..., XRootDStatus | tuple[XRootDStatus, T]],
 ) -> Callable[..., Coroutine[Any, Any, tuple[XRootDStatus, T]]]:
     """Wraps pyxrootd functions to run asynchronously. Returns an async callable
 
@@ -302,7 +302,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
     def _strip_protocol(cls, path: str | list[str]) -> Any:
         if isinstance(path, str):
             if path.startswith(cls.protocol):
-                return client.URL(path).path.rstrip("/") or cls.root_marker
+                return client.URL(path).path_with_params.rstrip("/") or cls.root_marker
             # assume already stripped
             return path.rstrip("/") or cls.root_marker
         elif isinstance(path, list):
