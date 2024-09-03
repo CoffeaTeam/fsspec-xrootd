@@ -110,7 +110,16 @@ def test_path_parsing():
             "root://serv.er//dir/",
         ]
     )
-    assert paths == ["/blah", "/more", "dir", "/dir"]
+    assert paths == [
+        "/blah",
+        "/more",
+        "dir",
+        "/dir",
+    ]
+    # get_fs_token_paths will expand glob patterns if '*', '?', or '[' are present
+    # so we need to test parameter parsing using a different method
+    fs, path = fsspec.url_to_fs("root://server.com//blah?param1=1&param2=2")
+    assert path == "/blah?param1=1&param2=2"
 
 
 def test_pickle(localserver, clear_server):
