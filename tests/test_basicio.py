@@ -108,9 +108,18 @@ def test_path_parsing():
             "root://server.com//more",
             "root://server.com/dir/",
             "root://serv.er//dir/",
+            "root://serv.er//dir?param=foo",
+            "root://serv.er//dir/?param=foo",
         ]
     )
-    assert paths == ["/blah", "/more", "dir", "/dir"]
+    assert paths == [
+        "/blah",
+        "/more",
+        "dir",
+        "/dir",
+        "/dir?param=foo",
+        "/dir/?param=foo",
+    ]
 
 
 def test_pickle(localserver, clear_server):
