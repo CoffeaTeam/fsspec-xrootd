@@ -16,6 +16,7 @@ from fsspec.asyn import AsyncFileSystem, _run_coros_in_chunks, sync, sync_wrappe
 from fsspec.exceptions import FSTimeoutError
 from fsspec.spec import AbstractBufferedFile
 from XRootD import client
+from XRootD.client import File
 from XRootD.client.flags import (
     DirListFlags,
     MkDirFlags,
@@ -372,21 +373,38 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             raise OSError(f"File not removed properly: {status.message}")
 
     async def _touch(self, path: str, truncate: bool = False, **kwargs: Any) -> None:
-        if truncate or not await self._exists(path):
-            status, _ = await _async_wrap(self._myclient.truncate)(
-                path, size=0, timeout=self.timeout
-            )
+        # necessary to write in EOS, see https://github.com/xrootd/xrootd/issues/2304
+        if "eos" in self.hostid:
+            eos_full_path = f"{self.protocol}://{self.hostid}/{path}"
+            f = File()
+            status, _ = f.open(eos_full_path, OpenFlags.NEW, timeout=self.timeout)
             if not status.ok:
-                raise OSError(f"File not touched properly: {status.message}")
-        else:
-            len = await self._info(path)
-            status, _ = await _async_wrap(self._myclient.truncate)(
-                path,
-                size=len.get("size"),
-                timeout=self.timeout,
-            )
-            if not status.ok:
-                raise OSError(f"File not touched properly: {status.message}")
+                raise OSError(f"Impossible to create file in EOS: {status.message}")
+            if truncate or not await self._exists(path):
+                status, _ = await _async_wrap(f.truncate)(
+                    size=0, timeout=self.timeout
+                )
+            else:
+                len = await self._info(path)
+                status, _ = await _async_wrap(f.truncate)(
+                    size=len.get("size"),
+                    timeout=self.timeout,
+                )
+            f.close()
+        else: 
+            if truncate or not await self._exists(path):
+                status, _ = await _async_wrap(self._myclient.truncate)(
+                    path, size=0, timeout=self.timeout
+                )
+            else:
+                len = await self._info(path)
+                status, _ = await _async_wrap(self._myclient.truncate)(
+                    path,
+                    size=len.get("size"),
+                    timeout=self.timeout,
+                )
+        if not status.ok:
+            raise OSError(f"File not touched properly: {status.message}")
 
     touch = sync_wrapper(_touch)
 
@@ -834,7 +852,7 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
 
         self.kwargs = kwargs
 
-        if mode not in {"ab", "rb", "wb"}:
+        if mode not in {"ab", "rb", "wb", "a+b", "r+b", "w+b"}:
             raise NotImplementedError("File mode not supported")
         if mode == "rb":
             if size is not None:
