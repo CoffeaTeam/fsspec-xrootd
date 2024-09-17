@@ -381,9 +381,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
             if not status.ok:
                 raise OSError(f"Impossible to create file in EOS: {status.message}")
             if truncate or not await self._exists(path):
-                status, _ = await _async_wrap(f.truncate)(
-                    size=0, timeout=self.timeout
-                )
+                status, _ = await _async_wrap(f.truncate)(size=0, timeout=self.timeout)
             else:
                 len = await self._info(path)
                 status, _ = await _async_wrap(f.truncate)(
@@ -391,7 +389,7 @@ class XRootDFileSystem(AsyncFileSystem):  # type: ignore[misc]
                     timeout=self.timeout,
                 )
             f.close()
-        else: 
+        else:
             if truncate or not await self._exists(path):
                 status, _ = await _async_wrap(self._myclient.truncate)(
                     path, size=0, timeout=self.timeout
