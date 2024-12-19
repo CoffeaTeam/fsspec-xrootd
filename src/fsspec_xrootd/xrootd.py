@@ -911,26 +911,6 @@ class XRootDFile(AbstractBufferedFile):  # type: ignore[misc]
             raise OSError(f"File did not read properly: {status.message}")
         return data
 
-    def flush(self, force: bool = False) -> None:
-        if self.closed:
-            raise ValueError("Flush on closed file")
-        if force and self.forced:
-            raise ValueError("Force flush cannot be called more than once")
-        if force:
-            self.forced = True
-
-        if self.mode not in {"wb", "ab"}:
-            # no-op to flush on read-mode
-            return
-
-        if not force and self.buffer.tell() < self.blocksize:
-            # Defer write on small block
-            return
-
-        if self._upload_chunk(final=force) is not False:
-            self.offset += self.buffer.seek(0, 2)
-            self.buffer = io.BytesIO()
-
     def _upload_chunk(self, final: bool = False) -> Any:
         status, _n = self._myFile.write(
             self.buffer.getvalue(),
